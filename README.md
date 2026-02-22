@@ -134,7 +134,7 @@ The agent exposes six tools via an in-process MCP server:
 | Tool | Purpose |
 |---|---|
 | `parse_opml_files` | Parse OPML glob → subscription list |
-| `process_single_feed` | Full fetch/filter/dedup/enrich/save pipeline for one feed |
+| `process_single_feed` | Chunked fetch/filter/dedup/enrich/save pipeline for one feed (`chunk_page`/`chunk_size`) |
 | `extract_page_metadata` | Scrape OG tags, canonical URL, hero image from a page |
 | `save_article` | Validate & save a single Article JSON |
 | `list_feed_articles` | List saved articles for a feed |
@@ -196,6 +196,7 @@ Environment variables are loaded from `.env` (see `example.env`):
 | `ANTHROPIC_AUTH_TOKEN` | API authentication token | `lmstudio` |
 | `MODEL` | Model name used by the SDK client (`USE_VLLM=1` overrides this to `VLLM_SERVED_MODEL_NAME`) | `mistral-7b-instruct-v0_3` |
 | `CLAUDE_CODE_MAX_OUTPUT_TOKENS` | Max output tokens per assistant response | `20000` |
+| `AGENT_MAX_TURNS` | Max agentic turns per run (`0` or blank = unlimited). Docs describe no default limit and do not publish a hard numeric max | `500` |
 | `ANTHROPIC_USE_MESSAGES_ENDPOINT` | Enables LM Studio Anthropic `/v1/messages` compatibility mode | `true` |
 | `LMSTUDIO_USER_ONLY_PROMPT` | When `1`, always avoid Anthropic `system` role by embedding system instructions in the first user message (template-compat mode) | `0` |
 | `LMSTUDIO_AUTO_USER_ONLY_RETRY` | When `1`, auto-retries once in template-compat mode if backend returns a Jinja role-mismatch error | `1` |
@@ -226,6 +227,9 @@ Environment variables are loaded from `.env` (see `example.env`):
 | `VLLM_TOOL_CALL_PARSER` | vLLM tool-call parser for the selected model | `mistral` |
 | `VLLM_STARTUP_TIMEOUT` | Seconds to wait for vLLM health readiness (`0` = no timeout) | `1800` |
 | `AGENT_MIN_CONTEXT_TOKENS` | Advisory threshold for effective context capacity (`0` disables advisory; does not block startup) | `16000` |
+
+`AGENT_MAX_TURNS` sizing heuristic: `(feed_count × expected_turns_per_feed) + retry_overhead`.
+Example: ~120 feeds × ~2 turns + overhead ≈ `300-500`.
 
 ### Runtime Modes
 

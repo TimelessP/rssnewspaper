@@ -19,6 +19,7 @@ Environment (loaded from .env):
     ANTHROPIC_BASE_URL  - LLM endpoint (e.g. http://localhost:1234 for LM Studio)
     ANTHROPIC_AUTH_TOKEN - API auth token
     CLAUDE_CODE_MAX_OUTPUT_TOKENS - Cap assistant output tokens per response
+    AGENT_MAX_TURNS     - Max agentic turns per run (blank/0 = no explicit limit)
     USE_VLLM            - Set to 1 to launch local vLLM automatically
 """
 
@@ -139,6 +140,29 @@ def _env_flag(name: str) -> bool:
 
     value = os.environ.get(name, "0").strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+def _optional_env_positive_int(name: str) -> int | None:
+    """Parse an environment variable as a positive integer, or None if unset/0."""
+
+    raw_value = os.environ.get(name, "").strip()
+    if raw_value == "" or raw_value == "0":
+        return None
+
+    try:
+        parsed_value = int(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"{name} must be a positive integer, 0, or blank. Got: {raw_value!r}"
+        ) from exc
+
+    if parsed_value < 0:
+        raise RuntimeError(
+            f"{name} must be a positive integer, 0, or blank. Got: {raw_value!r}"
+        )
+    if parsed_value == 0:
+        return None
+    return parsed_value
 
 
 def _tail_text_file(path: Path, max_lines: int = 120) -> str:
@@ -1580,8 +1604,25 @@ async def parse_opml_files(args: dict[str, Any]) -> dict[str, Any]:
                 "type": "integer",
                 "description": "Number of list items to return per page",
             },
+            "chunk_page": {
+                "type": "integer",
+                "description": "1-based chunk page for recent feed entries to process in this call",
+            },
+            "chunk_size": {
+                "type": "integer",
+                "description": "Number of recent feed entries to process in this call",
+            },
         },
-        "required": ["feed_name", "feed_url", "category", "source_opml", "page", "page_size"],
+        "required": [
+            "feed_name",
+            "feed_url",
+            "category",
+            "source_opml",
+            "page",
+            "page_size",
+            "chunk_page",
+            "chunk_size",
+        ],
     },
 )
 async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
@@ -1600,6 +1641,8 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
     try:
         page = _require_positive_int(args["page"], "page")
         page_size = _require_positive_int(args["page_size"], "page_size")
+        chunk_page = _require_positive_int(args["chunk_page"], "chunk_page")
+        chunk_size = _require_positive_int(args["chunk_size"], "chunk_size")
     except (KeyError, ValueError) as exc:
         return _text_result({"error": str(exc)})
 
@@ -1725,11 +1768,24 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
     enriched_count = 0
     errors: list[str] = []
 
+    recent_entries: list[Any] = []
     for entry in feed.entries:
-        # ── Date filter ─────────────────────────────────────────────────────
         pub_date = _parse_entry_date(entry)
         if pub_date and pub_date < cutoff:
             skipped_old += 1
+            continue
+        recent_entries.append(entry)
+
+    entries_to_process, chunk_pagination = _paginate_items(
+        recent_entries,
+        chunk_page,
+        chunk_size,
+    )
+
+    for entry in entries_to_process:
+        # ── Date filter (kept for safety when dates are malformed) ──────────
+        pub_date = _parse_entry_date(entry)
+        if pub_date and pub_date < cutoff:
             continue
 
         # ── GUID & dedup ────────────────────────────────────────────────────
@@ -1843,7 +1899,9 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
             "category_updated_in_opml": category_updated_in_opml,
             "status": "ok",
             "total_entries": len(feed.entries),
-            "recent_entries": len(feed.entries) - skipped_old,
+            "recent_entries": len(recent_entries),
+            "chunk_entries_considered": len(entries_to_process),
+            "chunk_pagination": chunk_pagination,
             "new_saved": len(saved_articles),
             "duplicates_skipped": skipped_dupes,
             "old_skipped": skipped_old,
@@ -2452,14 +2510,18 @@ Note the total count.
 ### Step 2: PROCESS EACH FEED
 For **every** subscription returned in Step 1, call
 `mcp__rss_tools__process_single_feed` with the feed's name, url, category,
-source_opml, page=1, page_size=50.  This single call will:
+source_opml, page=1, page_size=20, chunk_page=1, chunk_size=10.
+Then continue chunking with chunk_page=2,3,... while
+chunk_pagination.has_next_page is true. Each chunk call will:
   • fetch the feed
   • filter to the last 3 days
+    • process only a bounded subset of recent entries for that chunk
   • skip duplicates already on disk
   • auto-enrich missing image/content by scraping the article page
   • save new articles as JSON
 
-Process feeds one by one.  If a feed errors, note it and continue to the next.
+Process feeds one by one and chunk by chunk. If a feed errors, note it and
+continue to the next feed.
 
 ### Step 3: SUMMARY
 After ALL feeds are processed, call `mcp__rss_tools__get_run_statistics` with
@@ -2475,7 +2537,7 @@ RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • Do NOT skip any feed.  Process every single one.
 • If a feed returns 0 recent articles, that is fine — just move on.
-• Be efficient: each feed needs only ONE tool call (process_single_feed).
+• Keep each call small by using chunk_size around 5-15.
 • Keep going until every feed in the OPML has been processed.
 • ALL tools are paginated. Always pass page and page_size.
 • For any paginated result, continue page-by-page until has_next_page is false.
@@ -2522,6 +2584,7 @@ async def main() -> None:
 
     vllm_process, llm_endpoint = configure_llm_runtime()
     context_capacity_advisory = _validate_agent_context_capacity()
+    agent_max_turns = _optional_env_positive_int("AGENT_MAX_TURNS")
     try:
         print("=" * 70)
         print("  RSS Newspaper — Agentic Fetcher")
@@ -2532,6 +2595,10 @@ async def main() -> None:
         print(f"  Cutoff:       last {CUTOFF_DAYS} days")
         print(f"  LLM endpoint: {llm_endpoint}")
         print(f"  Model:        {os.environ.get('MODEL', '(default)')}")
+        if agent_max_turns is None:
+            print("  Max turns:    unlimited (SDK/CLI default)")
+        else:
+            print(f"  Max turns:    {agent_max_turns}")
         if vllm_process is not None:
             print(f"  Runtime:      vLLM (pid={vllm_process.pid})")
             print(f"  vLLM model:   {os.environ.get('VLLM_MODEL', '(unknown)')}")
@@ -2613,8 +2680,9 @@ async def main() -> None:
                 ],
                 "permission_mode": "bypassPermissions",
                 "cwd": str(PROJECT_ROOT),
-                "max_turns": 500,  # ~120 feeds × ~2 turns each + overhead
             }
+            if agent_max_turns is not None:
+                options_kwargs["max_turns"] = agent_max_turns
             if system_prompt is not None:
                 options_kwargs["system_prompt"] = system_prompt
 
