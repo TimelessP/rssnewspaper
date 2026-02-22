@@ -1,0 +1,11 @@
+.venv/
+.env
+data/
+data/feed*.opml
+data/articles/
+logs/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log

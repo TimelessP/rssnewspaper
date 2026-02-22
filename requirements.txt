@@ -1,0 +1,7 @@
+python-dotenv
+claude-agent-sdk
+pydantic
+feedparser
+beautifulsoup4
+requests
+lxml
