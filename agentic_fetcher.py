@@ -1581,6 +1581,35 @@ def compute_run_statistics() -> dict[str, Any]:
     }
 
 
+def _feed_has_recent_entries(feed_url: str) -> tuple[bool, str]:
+    """Quick precheck for whether a feed appears to have recent entries.
+
+    Returns ``(should_process, reason)`` where:
+      - ``should_process=True`` means proceed with agent processing.
+      - ``should_process=False`` means skip this feed as a no-op.
+
+    This precheck is intentionally conservative: on parsing errors, we allow
+    processing instead of risking false skips.
+    """
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=CUTOFF_DAYS)
+    try:
+        parsed = feedparser.parse(feed_url, request_headers=HTTP_HEADERS)
+    except Exception as exc:
+        return True, f"precheck failed ({exc}); processing anyway"
+
+    entries = getattr(parsed, "entries", []) or []
+    if not entries:
+        return False, "no entries in feed"
+
+    for entry in entries:
+        entry_dt = _parse_entry_date(entry)
+        if entry_dt is not None and entry_dt >= cutoff:
+            return True, "has recent entries"
+
+    return False, f"no entries in last {CUTOFF_DAYS} days"
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  MCP Tool Definitions
 #  ─ Each tool has:
@@ -2612,6 +2641,7 @@ WORKFLOW
 2. If the result has chunk_pagination.has_next_page=true, call again with
    chunk_page=2, 3, … until all chunks are processed.
 3. When all chunks are done, output a brief summary of what was saved/skipped.
+4. If there is nothing new to do, report that plainly and STOP.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RULES
@@ -2619,6 +2649,9 @@ RULES
 • Keep each call small by using chunk_size around 5-15.
 • ALL tools are paginated.  Always pass page and page_size.
 • For any paginated result, continue page-by-page until has_next_page is false.
+• Do NOT ask the user any clarifying/follow-up questions.
+• Do NOT suggest additional optional actions.
+• End with a concise final status statement only.
 • Response limit: """ + str(os.environ.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS", 32768)) + """ tokens.
 """
 
@@ -2711,6 +2744,7 @@ async def _run_feed_agent(
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     user_prompt = (
         f"Today is {today}.  Process this feed now:\n"
+        f"  feed_index:  {feed_index}/{total_feeds}\n"
         f"  feed_name:   {sub.name}\n"
         f"  feed_url:    {sub.xml_url}\n"
         f"  category:    {sub.category}\n"
@@ -2728,6 +2762,7 @@ async def _run_feed_agent(
         "duration_s": 0.0,
         "error": None,
     }
+    per_feed_timeout_s = _optional_env_positive_int("PER_FEED_AGENT_TIMEOUT_SECONDS")
 
     for attempt in range(2):
         system_prompt, prompt = _build_agent_prompts(
@@ -2745,6 +2780,7 @@ async def _run_feed_agent(
                 "mcp__rss_tools__save_article",
                 "mcp__rss_tools__list_feed_articles",
             ],
+            "disallowed_tools": ["AskUserQuestion"],
             "permission_mode": "bypassPermissions",
             "cwd": str(PROJECT_ROOT),
         }
@@ -2758,39 +2794,88 @@ async def _run_feed_agent(
         try:
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(prompt)
+                saw_result = False
+                response_iter = client.receive_response()
+                if per_feed_timeout_s is None:
+                    async for message in response_iter:
+                        if isinstance(message, AssistantMessage):
+                            for block in message.content:
+                                if isinstance(block, TextBlock):
+                                    print(f"    [Agent] {block.text}")
+                                elif isinstance(block, ToolUseBlock):
+                                    tool_name_short = block.name.split("__")[-1]
+                                    input_preview = json.dumps(block.input)
+                                    if len(input_preview) > 120:
+                                        input_preview = input_preview[:117] + "..."
+                                    print(f"      → {tool_name_short}({input_preview})")
+                                elif isinstance(block, ToolResultBlock):
+                                    if block.content and isinstance(block.content, str):
+                                        try:
+                                            data = json.loads(block.content)
+                                            if "new_saved" in data:
+                                                result["new_saved"] += data["new_saved"]
+                                                result["duplicates_skipped"] += data.get(
+                                                    "duplicates_skipped", 0
+                                                )
+                                                print(
+                                                    f"      ✓ saved={data['new_saved']}  "
+                                                    f"dupes={data.get('duplicates_skipped', 0)}  "
+                                                    f"status={data.get('status', '?')}"
+                                                )
+                                        except (json.JSONDecodeError, TypeError):
+                                            pass
 
-                async for message in client.receive_messages():
-                    if isinstance(message, AssistantMessage):
-                        for block in message.content:
-                            if isinstance(block, TextBlock):
-                                print(f"    [Agent] {block.text}")
-                            elif isinstance(block, ToolUseBlock):
-                                tool_name_short = block.name.split("__")[-1]
-                                input_preview = json.dumps(block.input)
-                                if len(input_preview) > 120:
-                                    input_preview = input_preview[:117] + "..."
-                                print(f"      → {tool_name_short}({input_preview})")
-                            elif isinstance(block, ToolResultBlock):
-                                if block.content and isinstance(block.content, str):
-                                    try:
-                                        data = json.loads(block.content)
-                                        if "new_saved" in data:
-                                            result["new_saved"] += data["new_saved"]
-                                            result["duplicates_skipped"] += data.get(
-                                                "duplicates_skipped", 0
-                                            )
-                                            print(
-                                                f"      ✓ saved={data['new_saved']}  "
-                                                f"dupes={data.get('duplicates_skipped', 0)}  "
-                                                f"status={data.get('status', '?')}"
-                                            )
-                                    except (json.JSONDecodeError, TypeError):
-                                        pass
+                        elif isinstance(message, ResultMessage):
+                            saw_result = True
+                            result["status"] = "ok" if not message.is_error else "error"
+                            result["turns"] = message.num_turns
+                            result["duration_s"] = message.duration_ms / 1000
+                else:
+                    try:
+                        async with asyncio.timeout(per_feed_timeout_s):
+                            async for message in response_iter:
+                                if isinstance(message, AssistantMessage):
+                                    for block in message.content:
+                                        if isinstance(block, TextBlock):
+                                            print(f"    [Agent] {block.text}")
+                                        elif isinstance(block, ToolUseBlock):
+                                            tool_name_short = block.name.split("__")[-1]
+                                            input_preview = json.dumps(block.input)
+                                            if len(input_preview) > 120:
+                                                input_preview = input_preview[:117] + "..."
+                                            print(f"      → {tool_name_short}({input_preview})")
+                                        elif isinstance(block, ToolResultBlock):
+                                            if block.content and isinstance(block.content, str):
+                                                try:
+                                                    data = json.loads(block.content)
+                                                    if "new_saved" in data:
+                                                        result["new_saved"] += data["new_saved"]
+                                                        result["duplicates_skipped"] += data.get(
+                                                            "duplicates_skipped", 0
+                                                        )
+                                                        print(
+                                                            f"      ✓ saved={data['new_saved']}  "
+                                                            f"dupes={data.get('duplicates_skipped', 0)}  "
+                                                            f"status={data.get('status', '?')}"
+                                                        )
+                                                except (json.JSONDecodeError, TypeError):
+                                                    pass
 
-                    elif isinstance(message, ResultMessage):
-                        result["status"] = "ok"
-                        result["turns"] = message.num_turns
-                        result["duration_s"] = message.duration_ms / 1000
+                                elif isinstance(message, ResultMessage):
+                                    saw_result = True
+                                    result["status"] = "ok" if not message.is_error else "error"
+                                    result["turns"] = message.num_turns
+                                    result["duration_s"] = message.duration_ms / 1000
+                    except TimeoutError:
+                        result["status"] = "error"
+                        result["error"] = (
+                            f"timed out after {per_feed_timeout_s}s waiting for agent result"
+                        )
+                        return result
+
+                if not saw_result and result["status"] != "error":
+                    result["status"] = "error"
+                    result["error"] = "agent stream ended without ResultMessage"
             break  # success — no retry needed
         except Exception as exc:
             should_retry = (
@@ -2912,12 +2997,33 @@ async def main() -> None:
         total_new = 0
         total_dupes = 0
         total_errors = 0
+        total_skipped = 0
         run_start = time.monotonic()
 
         for i, sub in enumerate(subscriptions, 1):
             print(f"  ┌─ Feed {i}/{total_feeds}: {sub.name}")
             print(f"  │  URL: {sub.xml_url}")
             print(f"  │  Category: {sub.category}  |  OPML: {sub.source_file}")
+
+            should_process, skip_reason = _feed_has_recent_entries(sub.xml_url)
+            if not should_process:
+                total_skipped += 1
+                feed_results.append(
+                    {
+                        "feed_name": sub.name,
+                        "status": "skipped",
+                        "new_saved": 0,
+                        "duplicates_skipped": 0,
+                        "turns": 0,
+                        "duration_s": 0.0,
+                        "error": None,
+                        "skip_reason": skip_reason,
+                    }
+                )
+                print(f"  └─ ↷ skipped: {skip_reason}")
+                print()
+                continue
+
             feed_start = time.monotonic()
 
             result = await _run_feed_agent(
@@ -2960,7 +3066,8 @@ async def main() -> None:
         print("  RSS Newspaper — Run Summary")
         print("=" * 70)
         print(f"  Feeds attempted:       {total_feeds}")
-        print(f"  Feeds succeeded:       {total_feeds - total_errors}")
+        print(f"  Feeds succeeded:       {total_feeds - total_errors - total_skipped}")
+        print(f"  Feeds skipped (no-op): {total_skipped}")
         print(f"  Feeds failed:          {total_errors}")
         print(f"  New articles saved:    {total_new}")
         print(f"  Duplicates skipped:    {total_dupes}")
@@ -2976,7 +3083,7 @@ async def main() -> None:
             print()
             print("  Failed feeds:")
             for r in feed_results:
-                if r["status"] != "ok":
+                if r["status"] == "error":
                     print(f"    • {r['feed_name']}: {r['error']}")
 
         if stats["per_feed"]:
