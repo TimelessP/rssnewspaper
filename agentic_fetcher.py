@@ -511,13 +511,17 @@ def configure_llm_runtime() -> tuple[subprocess.Popen[str] | None, str]:
         _stop_process_gracefully(process)
         raise
 
+    prior_model_env = os.environ.get("MODEL", "")
+
     os.environ["ANTHROPIC_BASE_URL"] = endpoint
     os.environ["ANTHROPIC_AUTH_TOKEN"] = api_key
     os.environ["ANTHROPIC_API_KEY"] = api_key
     os.environ.setdefault("ANTHROPIC_DEFAULT_OPUS_MODEL", served_model_name)
     os.environ.setdefault("ANTHROPIC_DEFAULT_SONNET_MODEL", served_model_name)
     os.environ.setdefault("ANTHROPIC_DEFAULT_HAIKU_MODEL", served_model_name)
-    os.environ.setdefault("MODEL", served_model_name)
+    os.environ["MODEL"] = served_model_name
+    if prior_model_env and prior_model_env != served_model_name:
+        os.environ["VLLM_ORIGINAL_MODEL_ENV"] = prior_model_env
     os.environ["VLLM_LOG_PATH"] = str(log_path)
     os.environ["VLLM_REQUESTED_PORT"] = str(requested_port)
     os.environ["VLLM_EFFECTIVE_PORT"] = str(port)
@@ -2157,6 +2161,10 @@ async def main() -> None:
     print(f"  Model:        {os.environ.get('MODEL', '(default)')}")
     if vllm_process is not None:
         print(f"  Runtime:      vLLM (pid={vllm_process.pid})")
+        print(f"  vLLM model:   {os.environ.get('VLLM_MODEL', '(unknown)')}")
+        original_model = os.environ.get("VLLM_ORIGINAL_MODEL_ENV")
+        if original_model:
+            print(f"  prior MODEL:  {original_model}")
         requested_port = os.environ.get("VLLM_REQUESTED_PORT")
         effective_port = os.environ.get("VLLM_EFFECTIVE_PORT")
         if requested_port and effective_port and requested_port != effective_port:

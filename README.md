@@ -194,7 +194,7 @@ Environment variables are loaded from `.env` (see `example.env`):
 |---|---|---|
 | `ANTHROPIC_BASE_URL` | LLM API endpoint | `http://localhost:1234` |
 | `ANTHROPIC_AUTH_TOKEN` | API authentication token | `lmstudio` |
-| `MODEL` | Model name used by the SDK client | `mistralai/ministral-3-3b` |
+| `MODEL` | Model name used by the SDK client (`USE_VLLM=1` overrides this to `VLLM_SERVED_MODEL_NAME`) | `mistral-7b-instruct-v0_3` |
 | `CLAUDE_CODE_MAX_OUTPUT_TOKENS` | Max output tokens per assistant response | `20000` |
 | `ANTHROPIC_USE_MESSAGES_ENDPOINT` | Enables LM Studio Anthropic `/v1/messages` compatibility mode | `true` |
 | `USE_VLLM` | When `1`, auto-start local vLLM server from the script | `1` |
