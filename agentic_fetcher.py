@@ -1490,6 +1490,98 @@ def _probe_feed_url(feed_url: str) -> tuple[int | None, str]:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Pure-Python helpers for OPML parsing & run statistics
+#  ─ Used by main() to avoid routing these through the LLM agent
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+def discover_subscriptions(
+    glob_pattern: str = "feed*.opml",
+) -> list[FeedSubscription]:
+    """Parse all OPML files matching *glob_pattern* under data/ and return a
+    flat list of :class:`FeedSubscription` objects.
+
+    This is the pure-Python equivalent of the ``parse_opml_files`` MCP tool —
+    called directly from ``main()`` so OPML parsing never touches the LLM.
+    """
+
+    opml_paths = sorted(glob.glob(str(DATA_DIR / glob_pattern)))
+    if not opml_paths:
+        print(f"  [warn] No OPML files matched pattern: {glob_pattern}")
+        return []
+
+    subscriptions: list[FeedSubscription] = []
+    for fpath in opml_paths:
+        try:
+            tree = ET.parse(fpath)
+            for outline in tree.getroot().iter("outline"):
+                xml_url = outline.get("xmlUrl")
+                if xml_url:
+                    subscriptions.append(
+                        FeedSubscription(
+                            name=outline.get("text", "Unnamed Feed"),
+                            xml_url=xml_url,
+                            category=outline.get("category", "Uncategorized")
+                            or "Uncategorized",
+                            source_file=Path(fpath).name,
+                        )
+                    )
+        except Exception as exc:
+            print(f"  [warn] Failed to parse {fpath}: {exc}")
+
+    print(f"  OPML files found: {len(opml_paths)}")
+    print(f"  Total subscriptions: {len(subscriptions)}")
+    return subscriptions
+
+
+def compute_run_statistics() -> dict[str, Any]:
+    """Scan data/articles/ and return run statistics as a plain dict.
+
+    This is the pure-Python equivalent of the ``get_run_statistics`` MCP tool.
+    """
+
+    if not ARTICLES_DIR.exists():
+        return {
+            "total_feeds": 0,
+            "total_articles": 0,
+            "missing_image_count": 0,
+            "missing_content_count": 0,
+            "per_feed": [],
+        }
+
+    per_feed: list[dict[str, Any]] = []
+    total_articles = 0
+    missing_image = 0
+    missing_content = 0
+
+    for feed_dir in sorted(ARTICLES_DIR.iterdir()):
+        if not feed_dir.is_dir():
+            continue
+        count = 0
+        for json_file in feed_dir.glob("*.json"):
+            count += 1
+            try:
+                with open(json_file) as f:
+                    data = json.load(f)
+                if not data.get("image_url"):
+                    missing_image += 1
+                if not data.get("content_html"):
+                    missing_content += 1
+            except Exception:
+                pass
+        total_articles += count
+        per_feed.append({"feed_slug": feed_dir.name, "article_count": count})
+
+    return {
+        "total_feeds": len(per_feed),
+        "total_articles": total_articles,
+        "missing_image_count": missing_image,
+        "missing_content_count": missing_content,
+        "per_feed": per_feed,
+    }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  MCP Tool Definitions
 #  ─ Each tool has:
 #      • JSON Schema input_schema with 'description' on every property
@@ -2502,10 +2594,36 @@ rss_server = create_sdk_mcp_server(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  Agent System Prompt
+#  Agent System Prompts
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-SYSTEM_PROMPT = """\
+PER_FEED_SYSTEM_PROMPT = """\
+You are an RSS/Atom feed article fetcher.  Your job is to fully process ONE
+feed: fetch it, filter to the last 3 days, deduplicate against already-saved
+articles, auto-enrich missing metadata by scraping, and save new articles as
+JSON.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WORKFLOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Call `mcp__rss_tools__process_single_feed` with the feed details provided
+   in the user message, using chunk_page=1, chunk_size=10, page=1, page_size=20.
+2. If the result has chunk_pagination.has_next_page=true, call again with
+   chunk_page=2, 3, … until all chunks are processed.
+3. When all chunks are done, output a brief summary of what was saved/skipped.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Keep each call small by using chunk_size around 5-15.
+• ALL tools are paginated.  Always pass page and page_size.
+• For any paginated result, continue page-by-page until has_next_page is false.
+• Response limit: """ + str(os.environ.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS", 32768)) + """ tokens.
+"""
+
+# Legacy multi-feed prompt kept for reference but no longer used by main().
+_LEGACY_SYSTEM_PROMPT = """\
 You are a meticulous RSS/Atom feed article fetcher agent.  Your mission is to
 build a complete, deduplicated archive of recent articles as JSON files so they
 can be rendered as "cards" on a newspaper-style web page.
@@ -2516,59 +2634,37 @@ WORKFLOW — Follow these steps in strict, numbered order:
 
 ### Step 1: DISCOVERY
 Call `mcp__rss_tools__parse_opml_files` with glob_pattern="feed*.opml",
-page=1, page_size=50. Then continue paging with page=2,3,... while
-pagination.has_next_page is true. Aggregate subscriptions across pages.
-Do NOT repeat the same page request unless there is an explicit error retry.
-Note the total count.
+page=1, page_size=50.  Then continue paging with page=2,3,… while
+pagination.has_next_page is true.
 
 ### Step 2: PROCESS EACH FEED
-For **every** subscription returned in Step 1, call
-`mcp__rss_tools__process_single_feed` with the feed's name, url, category,
-source_opml, page=1, page_size=20, chunk_page=1, chunk_size=10.
-Then continue chunking with chunk_page=2,3,... while
-chunk_pagination.has_next_page is true. Each chunk call will:
-  • fetch the feed
-  • filter to the last 3 days
-    • process only a bounded subset of recent entries for that chunk
-  • skip duplicates already on disk
-  • auto-enrich missing image/content by scraping the article page
-  • save new articles as JSON
-
-Process feeds one by one and chunk by chunk. If a feed errors, note it and
-continue to the next feed.
+For **every** subscription, call `mcp__rss_tools__process_single_feed`
+with the feed's details, page=1, page_size=20, chunk_page=1, chunk_size=10.
+Continue chunking while chunk_pagination.has_next_page is true.
 
 ### Step 3: SUMMARY
-After ALL feeds are processed, call `mcp__rss_tools__get_run_statistics` with
-include_per_feed_detail=true, page=1, page_size=100 and present a clear summary:
-  • Total feeds attempted
-  • Total new articles saved
-  • Total duplicates skipped
-  • Feeds that failed (with reason)
-  • Articles still missing hero image or body content
+Call `mcp__rss_tools__get_run_statistics` with include_per_feed_detail=true,
+page=1, page_size=100 and present a clear summary.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• Do NOT skip any feed.  Process every single one.
-• If a feed returns 0 recent articles, that is fine — just move on.
-• Keep each call small by using chunk_size around 5-15.
-• Keep going until every feed in the OPML has been processed.
-• ALL tools are paginated. Always pass page and page_size.
-• For any paginated result, continue page-by-page until has_next_page is false.
-• Keep responses within the token limit, especially for feeds with many articles.  If needed, truncate article summaries to fit within the limit, but do not skip entire articles.
-  • Response limit: """ + str(os.environ.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS", 32768)) + """ tokens.
+• Do NOT skip any feed.
+• ALL tools are paginated.
 """
 
 
-def _build_agent_prompts(user_prompt: str, force_user_only: bool = False) -> tuple[str | None, str]:
+def _build_agent_prompts(
+    system_prompt: str,
+    user_prompt: str,
+    force_user_only: bool = False,
+) -> tuple[str | None, str]:
     """Return system/user prompts with optional model-template compatibility mode."""
 
     if not force_user_only:
-        return SYSTEM_PROMPT, user_prompt
+        return system_prompt, user_prompt
 
     merged_prompt = (
         "SYSTEM INSTRUCTIONS:\n"
-        f"{SYSTEM_PROMPT.strip()}\n\n"
+        f"{system_prompt.strip()}\n\n"
         "USER REQUEST:\n"
         f"{user_prompt.strip()}"
     )
@@ -2593,15 +2689,148 @@ def _is_role_template_error(exc: Exception) -> bool:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
+async def _run_feed_agent(
+    sub: FeedSubscription,
+    feed_index: int,
+    total_feeds: int,
+    force_user_only: bool,
+    allow_auto_retry: bool,
+    agent_max_turns: int | None,
+) -> dict[str, Any]:
+    """Spawn a fresh agent to process a single feed and return a result dict.
+
+    Each invocation creates its own :class:`ClaudeSDKClient` context so the
+    LLM conversation stays short (just one feed) — avoiding the progressive
+    slowdown caused by growing context in a single long-running agent.
+
+    Returns a dict with ``feed_name``, ``status`` ("ok" / "error"),
+    ``new_saved``, ``duplicates_skipped``, ``turns``, ``duration_s``, and
+    ``error`` (if any).
+    """
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    user_prompt = (
+        f"Today is {today}.  Process this feed now:\n"
+        f"  feed_name:   {sub.name}\n"
+        f"  feed_url:    {sub.xml_url}\n"
+        f"  category:    {sub.category}\n"
+        f"  source_opml: {sub.source_file}\n\n"
+        f"Call process_single_feed with these details, chunk_page=1, "
+        f"chunk_size=10, page=1, page_size=20.  Continue chunking until done."
+    )
+
+    result: dict[str, Any] = {
+        "feed_name": sub.name,
+        "status": "error",
+        "new_saved": 0,
+        "duplicates_skipped": 0,
+        "turns": 0,
+        "duration_s": 0.0,
+        "error": None,
+    }
+
+    for attempt in range(2):
+        system_prompt, prompt = _build_agent_prompts(
+            PER_FEED_SYSTEM_PROMPT,
+            user_prompt,
+            force_user_only=force_user_only,
+        )
+
+        options_kwargs: dict[str, Any] = {
+            "mcp_servers": {"rss_tools": rss_server},
+            "model": os.environ.get("MODEL"),
+            "allowed_tools": [
+                "mcp__rss_tools__process_single_feed",
+                "mcp__rss_tools__extract_page_metadata",
+                "mcp__rss_tools__save_article",
+                "mcp__rss_tools__list_feed_articles",
+            ],
+            "permission_mode": "bypassPermissions",
+            "cwd": str(PROJECT_ROOT),
+        }
+        if agent_max_turns is not None:
+            options_kwargs["max_turns"] = agent_max_turns
+        if system_prompt is not None:
+            options_kwargs["system_prompt"] = system_prompt
+
+        options = ClaudeAgentOptions(**options_kwargs)
+
+        try:
+            async with ClaudeSDKClient(options=options) as client:
+                await client.query(prompt)
+
+                async for message in client.receive_messages():
+                    if isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                print(f"    [Agent] {block.text}")
+                            elif isinstance(block, ToolUseBlock):
+                                tool_name_short = block.name.split("__")[-1]
+                                input_preview = json.dumps(block.input)
+                                if len(input_preview) > 120:
+                                    input_preview = input_preview[:117] + "..."
+                                print(f"      → {tool_name_short}({input_preview})")
+                            elif isinstance(block, ToolResultBlock):
+                                if block.content and isinstance(block.content, str):
+                                    try:
+                                        data = json.loads(block.content)
+                                        if "new_saved" in data:
+                                            result["new_saved"] += data["new_saved"]
+                                            result["duplicates_skipped"] += data.get(
+                                                "duplicates_skipped", 0
+                                            )
+                                            print(
+                                                f"      ✓ saved={data['new_saved']}  "
+                                                f"dupes={data.get('duplicates_skipped', 0)}  "
+                                                f"status={data.get('status', '?')}"
+                                            )
+                                    except (json.JSONDecodeError, TypeError):
+                                        pass
+
+                    elif isinstance(message, ResultMessage):
+                        result["status"] = "ok"
+                        result["turns"] = message.num_turns
+                        result["duration_s"] = message.duration_ms / 1000
+            break  # success — no retry needed
+        except Exception as exc:
+            should_retry = (
+                attempt == 0
+                and not force_user_only
+                and allow_auto_retry
+                and _is_role_template_error(exc)
+            )
+            if should_retry:
+                print(
+                    "    [Advisory] Prompt-template role mismatch; "
+                    "retrying with user-only prompt."
+                )
+                force_user_only = True
+                continue
+            result["error"] = str(exc)
+            print(f"    [ERROR] {exc}")
+            break
+
+    return result
+
+
 async def main() -> None:
-    """Run the agentic RSS feed fetcher workflow."""
+    """Run the agentic RSS feed fetcher workflow.
+
+    Architecture (per-feed agent spawning):
+      1. Parse OPML files in pure Python (no LLM)
+      2. For each feed, spawn a *fresh* agent with a short conversation
+      3. Compute run statistics in pure Python (no LLM)
+
+    This keeps each agent's context small and avoids the progressive slowdown
+    caused by attention over a single long-running conversation.
+    """
 
     vllm_process, llm_endpoint = configure_llm_runtime()
     context_capacity_advisory = _validate_agent_context_capacity()
     agent_max_turns = _optional_env_positive_int("AGENT_MAX_TURNS")
     try:
         print("=" * 70)
-        print("  RSS Newspaper — Agentic Fetcher")
+        print("  RSS Newspaper — Agentic Fetcher  (per-feed agent mode)")
         print("=" * 70)
         print(f"  Project root: {PROJECT_ROOT}")
         print(f"  Data dir:     {DATA_DIR}")
@@ -2655,124 +2884,111 @@ async def main() -> None:
         # Ensure output directory exists
         ARTICLES_DIR.mkdir(parents=True, exist_ok=True)
 
-        # ── Prompt ──────────────────────────────────────────────────────────────
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        base_prompt = (
-            f"Today is {today}.  Begin the RSS article fetching workflow now.  "
-            f"Process ALL feeds found in the OPML files under data/.  "
-            f"Fetch articles from the last {CUTOFF_DAYS} days, deduplicate, "
-            f"enrich where possible, and save them all as JSON files."
-        )
-        feeds_processed = 0
+        # ── Step 1: Discover feeds (pure Python — no LLM) ──────────────────
+        print("─" * 70)
+        print("  Step 1/3: OPML Discovery  (pure Python)")
+        print("─" * 70)
+        subscriptions = discover_subscriptions()
+        if not subscriptions:
+            print("  No subscriptions found.  Nothing to do.")
+            return
+        for i, sub in enumerate(subscriptions, 1):
+            print(f"    {i:>3}. [{sub.category}] {sub.name}")
+        print()
+
+        # ── Step 2: Process each feed (one agent per feed) ─────────────────
+        print("─" * 70)
+        print("  Step 2/3: Per-Feed Agent Processing")
+        print("─" * 70)
+        print()
         force_user_only = _env_flag("LMSTUDIO_USER_ONLY_PROMPT")
         allow_auto_retry = _env_flag("LMSTUDIO_AUTO_USER_ONLY_RETRY")
+        if force_user_only:
+            print("  Prompt mode: model-template compatibility (user-only merge)")
+            print()
 
-        for attempt in range(2):
-            system_prompt, prompt = _build_agent_prompts(
-                base_prompt,
+        total_feeds = len(subscriptions)
+        feed_results: list[dict[str, Any]] = []
+        total_new = 0
+        total_dupes = 0
+        total_errors = 0
+        run_start = time.monotonic()
+
+        for i, sub in enumerate(subscriptions, 1):
+            print(f"  ┌─ Feed {i}/{total_feeds}: {sub.name}")
+            print(f"  │  URL: {sub.xml_url}")
+            print(f"  │  Category: {sub.category}  |  OPML: {sub.source_file}")
+            feed_start = time.monotonic()
+
+            result = await _run_feed_agent(
+                sub=sub,
+                feed_index=i,
+                total_feeds=total_feeds,
                 force_user_only=force_user_only,
+                allow_auto_retry=allow_auto_retry,
+                agent_max_turns=agent_max_turns,
             )
-            if force_user_only:
-                print("  Prompt mode: model-template compatibility (user-only merge)")
-                print()
+            feed_results.append(result)
 
-            # ── Build options ───────────────────────────────────────────────────
-            options_kwargs: dict[str, Any] = {
-                "mcp_servers": {"rss_tools": rss_server},
-                "model": os.environ.get("MODEL"),
-                "allowed_tools": [
-                    # Custom MCP tools
-                    "mcp__rss_tools__parse_opml_files",
-                    "mcp__rss_tools__process_single_feed",
-                    "mcp__rss_tools__extract_page_metadata",
-                    "mcp__rss_tools__save_article",
-                    "mcp__rss_tools__list_feed_articles",
-                    "mcp__rss_tools__get_run_statistics",
-                    # Built-in tools for ad-hoc enrichment / searching
-                    "WebSearch",
-                    "WebFetch",
-                ],
-                "permission_mode": "bypassPermissions",
-                "cwd": str(PROJECT_ROOT),
-            }
-            if agent_max_turns is not None:
-                options_kwargs["max_turns"] = agent_max_turns
-            if system_prompt is not None:
-                options_kwargs["system_prompt"] = system_prompt
+            elapsed = time.monotonic() - feed_start
+            status_icon = "✓" if result["status"] == "ok" else "✗"
+            print(
+                f"  └─ {status_icon} {result['new_saved']} saved, "
+                f"{result['duplicates_skipped']} dupes, "
+                f"{result['turns']} turns, {elapsed:.1f}s"
+            )
+            if result["error"]:
+                print(f"     Error: {result['error']}")
+            print()
 
-            options = ClaudeAgentOptions(**options_kwargs)
-            feeds_processed = 0
+            total_new += result["new_saved"]
+            total_dupes += result["duplicates_skipped"]
+            if result["status"] != "ok":
+                total_errors += 1
 
-            try:
-                async with ClaudeSDKClient(options=options) as client:
-                    await client.query(prompt)
+        run_elapsed = time.monotonic() - run_start
 
-                    async for message in client.receive_messages():
-                        if isinstance(message, AssistantMessage):
-                            for block in message.content:
-                                if isinstance(block, TextBlock):
-                                    print(f"\n[Agent] {block.text}")
-                                elif isinstance(block, ToolUseBlock):
-                                    tool_name_short = block.name.split("__")[-1]
-                                    input_preview = json.dumps(block.input)
-                                    if len(input_preview) > 120:
-                                        input_preview = input_preview[:117] + "..."
-                                    print(f"  → {tool_name_short}({input_preview})")
-                                    if tool_name_short == "process_single_feed":
-                                        feeds_processed += 1
-                                        print(
-                                            f"    [feed #{feeds_processed}: "
-                                            f"{block.input.get('feed_name', '?')}]"
-                                        )
-                                elif isinstance(block, ToolResultBlock):
-                                    # Summarise tool results concisely
-                                    if block.content and isinstance(block.content, str):
-                                        try:
-                                            data = json.loads(block.content)
-                                            if "new_saved" in data:
-                                                print(
-                                                    f"    ✓ saved={data['new_saved']}  "
-                                                    f"dupes={data.get('duplicates_skipped', 0)}  "
-                                                    f"status={data.get('status', '?')}"
-                                                )
-                                        except (json.JSONDecodeError, TypeError):
-                                            pass
+        # ── Step 3: Statistics (pure Python — no LLM) ──────────────────────
+        print("─" * 70)
+        print("  Step 3/3: Run Statistics  (pure Python)")
+        print("─" * 70)
+        stats = compute_run_statistics()
+        print()
 
-                        elif isinstance(message, ResultMessage):
-                            print()
-                            print("=" * 70)
-                            print(f"  Workflow finished: {message.subtype}")
-                            print(f"  Duration:  {message.duration_ms / 1000:.1f}s")
-                            print(f"  Turns:     {message.num_turns}")
-                            if message.total_cost_usd is not None:
-                                print(f"  Cost:      ${message.total_cost_usd:.4f}")
-                            if message.result:
-                                # Print the final summary (truncate if very long)
-                                result_text = message.result
-                                if len(result_text) > 2000:
-                                    result_text = result_text[:2000] + "\n... (truncated)"
-                                print(f"\n{result_text}")
-                break
-            except Exception as exc:
-                should_retry = (
-                    attempt == 0
-                    and not force_user_only
-                    and allow_auto_retry
-                    and _is_role_template_error(exc)
-                )
-                if should_retry:
-                    print()
-                    print(
-                        "  [Advisory] Prompt-template role mismatch detected from model metadata; "
-                        "retrying with merged user-only prompt mode."
-                    )
-                    print()
-                    force_user_only = True
-                    continue
-                raise
-        print(f"\nTotal feeds dispatched: {feeds_processed}")
-        print(f"Article files at: {ARTICLES_DIR}")
-        print("Done.")
+        # ── Final summary ──────────────────────────────────────────────────
+        print("=" * 70)
+        print("  RSS Newspaper — Run Summary")
+        print("=" * 70)
+        print(f"  Feeds attempted:       {total_feeds}")
+        print(f"  Feeds succeeded:       {total_feeds - total_errors}")
+        print(f"  Feeds failed:          {total_errors}")
+        print(f"  New articles saved:    {total_new}")
+        print(f"  Duplicates skipped:    {total_dupes}")
+        print(f"  Total processing time: {run_elapsed:.1f}s")
+        print()
+        print(f"  Archive totals:")
+        print(f"    Total feeds on disk:   {stats['total_feeds']}")
+        print(f"    Total articles:        {stats['total_articles']}")
+        print(f"    Missing hero image:    {stats['missing_image_count']}")
+        print(f"    Missing body content:  {stats['missing_content_count']}")
+
+        if total_errors:
+            print()
+            print("  Failed feeds:")
+            for r in feed_results:
+                if r["status"] != "ok":
+                    print(f"    • {r['feed_name']}: {r['error']}")
+
+        if stats["per_feed"]:
+            print()
+            print("  Per-feed article counts:")
+            for pf in stats["per_feed"]:
+                print(f"    {pf['feed_slug']:.<45} {pf['article_count']}")
+
+        print()
+        print(f"  Article files at: {ARTICLES_DIR}")
+        print("=" * 70)
+        print("  Done.")
     finally:
         if vllm_process is not None and vllm_process.poll() is None:
             _stop_process_gracefully(vllm_process)

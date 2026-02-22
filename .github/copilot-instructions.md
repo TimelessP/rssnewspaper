@@ -4,7 +4,7 @@
 
 RSS Newspaper is a two-stage pipeline:
 
-1. **`agentic_fetcher.py`** — A Claude Agent SDK agent that parses OPML subscription lists, fetches RSS/Atom feeds, enriches missing metadata via page scraping, sanitizes HTML, detects media assets (MP3/MP4/YouTube), and saves fully-populated Article JSON files under `data/articles/<feed-slug>/`.
+1. **`agentic_fetcher.py`** — A per-feed agent pipeline: parses OPML in pure Python, spawns a fresh Claude Agent SDK agent for each feed (keeping context small for consistent token speed), enriches missing metadata via page scraping, sanitizes HTML, detects media assets (MP3/MP4/YouTube), computes statistics in pure Python, and saves fully-populated Article JSON files under `data/articles/<feed-slug>/`.
 
 2. **`generate_newspaper.py`** — A Jinja2-based HTML generator that reads all article JSON files and renders a single self-contained HTML newspaper with an old-time newspaper aesthetic (desaturated palette, serif typography, inline SVG icons). Output goes to `data/newspapers/yyyy-mm-dd_HHmm/`.
 
@@ -12,7 +12,7 @@ RSS Newspaper is a two-stage pipeline:
 
 | File | Purpose |
 |---|---|
-| `agentic_fetcher.py` | Agentic RSS fetcher (~2800 lines). Uses Claude Agent SDK + in-process MCP tools. |
+| `agentic_fetcher.py` | Per-feed agentic RSS fetcher (~3000 lines). Uses Claude Agent SDK + in-process MCP tools. |
 | `generate_newspaper.py` | Newspaper HTML generator (~520 lines). Loads JSON, enriches for display, renders Jinja2. |
 | `templates/newspaper.html.j2` | Self-contained HTML template (~1900 lines). All CSS, JS, SVG icons inline. |
 | `data/feed*.opml` | OPML subscription files (input for the fetcher). |
@@ -86,3 +86,4 @@ The OPML file defines categories via `category` attributes on feed outlines. The
 - `content_html` is sanitized before saving (no scripts, styles, iframes, forms; HTTPS-only links/images).
 - Articles are deduplicated by GUID. Re-runs never create duplicate files.
 - The fetcher supports chunked processing via `chunk_page`/`chunk_size` to stay within output token limits.
+- The fetcher uses per-feed agent spawning: OPML parsing and statistics are pure Python; only feed processing uses the LLM. Each feed gets a fresh agent conversation to avoid context growth and progressive slowdown.
