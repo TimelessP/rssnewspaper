@@ -31,6 +31,8 @@ Every article is validated against a Pydantic `Article` model with 16 fields:
 | `fetched_at` | When the data was fetched |
 | `source_opml` | Which OPML file contained the feed |
 | `guid` | Globally unique identifier |
+| `content_kind` | Primary type: `article`, `podcast`, or `video` |
+| `media_assets` | Structured media list (mp3/mp4/youtube and metadata) |
 
 ### Output Structure
 
@@ -114,6 +116,7 @@ Environment variables are loaded from `.env` (see `example.env`):
 |---|---|---|
 | `ANTHROPIC_BASE_URL` | LLM API endpoint | `http://localhost:1234` |
 | `ANTHROPIC_AUTH_TOKEN` | API authentication token | `lmstudio` |
+| `CLAUDE_CODE_MAX_OUTPUT_TOKENS` | Max output tokens per assistant response | `20000` |
 
 ## Project Structure
 

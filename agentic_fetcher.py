@@ -18,6 +18,8 @@ Re-runs are idempotent: existing articles (matched by GUID) are never duplicated
 Environment (loaded from .env):
     ANTHROPIC_BASE_URL  - LLM endpoint (e.g. http://localhost:1234 for LM Studio)
     ANTHROPIC_AUTH_TOKEN - API auth token
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS - Cap assistant output tokens per response
+    USE_VLLM            - Set to 1 to launch local vLLM automatically
 """
 
 from __future__ import annotations
@@ -28,12 +30,14 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
-from urllib.parse import urljoin
+from typing import Any, Literal
+from urllib.parse import urljoin, urlparse
 
 import feedparser
 import requests
@@ -60,13 +64,6 @@ from claude_agent_sdk import (
 
 load_dotenv()
 
-# The Claude Agent SDK (and the underlying Claude Code CLI) reads
-# ANTHROPIC_API_KEY. The user's .env may set ANTHROPIC_AUTH_TOKEN instead.
-if not os.environ.get("ANTHROPIC_API_KEY"):
-    _token = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
-    if _token:
-        os.environ["ANTHROPIC_API_KEY"] = _token
-
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_ROOT / "data"
 ARTICLES_DIR = DATA_DIR / "articles"
@@ -85,6 +82,144 @@ HTTP_HEADERS = {
 # Timeout for HTTP requests (seconds)
 HTTP_TIMEOUT = 20
 PERMANENT_REDIRECT_CODES = {301, 308}
+
+SAFE_HTML_TAGS = {
+    "p",
+    "br",
+    "hr",
+    "ul",
+    "ol",
+    "li",
+    "blockquote",
+    "pre",
+    "code",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "strong",
+    "b",
+    "em",
+    "i",
+    "u",
+    "a",
+    "img",
+}
+
+STRIP_ENTIRELY_TAGS = {
+    "script",
+    "style",
+    "iframe",
+    "object",
+    "embed",
+    "form",
+    "input",
+    "button",
+    "textarea",
+    "select",
+    "option",
+    "meta",
+    "link",
+    "base",
+    "svg",
+    "math",
+}
+
+
+def _env_flag(name: str) -> bool:
+    """Parse an environment variable as a boolean flag."""
+
+    value = os.environ.get(name, "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _wait_for_vllm_ready(base_url: str, timeout_seconds: int) -> None:
+    """Wait until the local vLLM server responds on a health endpoint."""
+
+    deadline = time.monotonic() + timeout_seconds
+    probe_paths = ("/health", "/v1/models", "/version")
+
+    while time.monotonic() < deadline:
+        for path in probe_paths:
+            try:
+                response = requests.get(
+                    urljoin(base_url + "/", path.lstrip("/")), timeout=3
+                )
+                if response.status_code < 500:
+                    return
+            except requests.RequestException:
+                continue
+        time.sleep(1)
+
+    raise RuntimeError(
+        f"Timed out waiting for vLLM server at {base_url} after {timeout_seconds}s"
+    )
+
+
+def configure_llm_runtime() -> tuple[subprocess.Popen[str] | None, str]:
+    """Configure endpoint/auth, optionally launching a local vLLM server."""
+
+    if not _env_flag("USE_VLLM"):
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            token = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
+            if token:
+                os.environ["ANTHROPIC_API_KEY"] = token
+        return None, os.environ.get("ANTHROPIC_BASE_URL", "(default)")
+
+    vllm_model = os.environ.get("VLLM_MODEL", "mistralai/ministral-3-3b")
+    served_model_name = os.environ.get("VLLM_SERVED_MODEL_NAME", "ministral-3-3b")
+    host = os.environ.get("VLLM_HOST", "127.0.0.1")
+    port = int(os.environ.get("VLLM_PORT", "8000"))
+    max_model_len = max(20000, int(os.environ.get("VLLM_MAX_MODEL_LEN", "20000")))
+    api_key = os.environ.get("VLLM_API_KEY", "dummy")
+    tool_call_parser = os.environ.get("VLLM_TOOL_CALL_PARSER", "mistral")
+    wait_timeout_seconds = int(os.environ.get("VLLM_STARTUP_TIMEOUT", "300"))
+
+    endpoint = f"http://{host}:{port}"
+    serve_cmd = [
+        "vllm",
+        "serve",
+        vllm_model,
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--served-model-name",
+        served_model_name,
+        "--max-model-len",
+        str(max_model_len),
+        "--api-key",
+        api_key,
+        "--enable-auto-tool-choice",
+        "--tool-call-parser",
+        tool_call_parser,
+    ]
+
+    try:
+        process = subprocess.Popen(serve_cmd, cwd=str(PROJECT_ROOT), text=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "USE_VLLM=1 but 'vllm' executable was not found. "
+            "Install vLLM in the active environment."
+        ) from exc
+
+    try:
+        _wait_for_vllm_ready(endpoint, wait_timeout_seconds)
+    except Exception:
+        process.terminate()
+        process.wait(timeout=15)
+        raise
+
+    os.environ["ANTHROPIC_BASE_URL"] = endpoint
+    os.environ["ANTHROPIC_AUTH_TOKEN"] = api_key
+    os.environ["ANTHROPIC_API_KEY"] = api_key
+    os.environ.setdefault("ANTHROPIC_DEFAULT_OPUS_MODEL", served_model_name)
+    os.environ.setdefault("ANTHROPIC_DEFAULT_SONNET_MODEL", served_model_name)
+    os.environ.setdefault("ANTHROPIC_DEFAULT_HAIKU_MODEL", served_model_name)
+    os.environ.setdefault("MODEL", served_model_name)
+    return process, endpoint
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -164,6 +299,38 @@ class Article(BaseModel):
             "the feed's own GUID, or a SHA-256 hash derived from the link+title"
         )
     )
+    content_kind: Literal["article", "podcast", "video"] = Field(
+        default="article",
+        description="Primary content type for rendering and UX treatment",
+    )
+    media_assets: list["MediaAsset"] = Field(
+        default_factory=list,
+        description=(
+            "Structured media attachments for the item (e.g. mp3/mp4/youtube). "
+            "Useful for podcast/video cards and playback UIs."
+        ),
+    )
+
+
+class MediaAsset(BaseModel):
+    """A single playable media attachment associated with an article/feed item."""
+
+    kind: Literal["audio", "video", "youtube"] = Field(
+        description="Media type for player selection"
+    )
+    url: str = Field(description="Absolute HTTPS URL to the media resource")
+    mime_type: str = Field(
+        default="",
+        description="MIME type when available (e.g. audio/mpeg, video/mp4)",
+    )
+    title: str = Field(
+        default="",
+        description="Human-friendly media label, usually episode title",
+    )
+    duration_seconds: int | None = Field(
+        default=None,
+        description="Duration in seconds when available from feed metadata",
+    )
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -187,6 +354,216 @@ def _to_str(value: Any) -> str:
     if isinstance(value, list):
         return " ".join(str(item) for item in value if item is not None)
     return str(value)
+
+
+def _is_https_url(url: str) -> bool:
+    """Return True only for absolute https:// URLs."""
+
+    candidate = url.strip()
+    if not candidate:
+        return False
+    parsed = urlparse(candidate)
+    return parsed.scheme == "https" and bool(parsed.netloc)
+
+
+def _html_to_plain_text(raw_html: str) -> str:
+    """Convert HTML (or plain text) into safe plain text."""
+
+    if not raw_html:
+        return ""
+    return BeautifulSoup(raw_html, "html.parser").get_text(" ", strip=True)
+
+
+def _sanitize_content_html(raw_html: str) -> str:
+    """Sanitize article HTML to semantic markup only.
+
+    Security policy:
+      - Remove scripts, styles, forms, embeds, and similar active content.
+      - Remove inline styling and non-whitelisted attributes.
+      - Keep semantic formatting elements.
+      - Any hyperlink whose href is not absolute https:// is converted to text.
+      - Images are kept only when src is absolute https://.
+    """
+
+    if not raw_html:
+        return ""
+
+    soup = BeautifulSoup(raw_html, "html.parser")
+
+    for tag in soup.find_all(True):
+        name = tag.name.lower()
+
+        if name in STRIP_ENTIRELY_TAGS:
+            tag.decompose()
+            continue
+
+        if name not in SAFE_HTML_TAGS:
+            tag.unwrap()
+            continue
+
+        if name == "a":
+            href = _to_str(tag.get("href", "")).strip()
+            if not _is_https_url(href):
+                tag.unwrap()
+                continue
+
+            for attr in list(tag.attrs):
+                if attr not in {"href", "title"}:
+                    del tag.attrs[attr]
+            tag["href"] = href
+            tag["rel"] = "noopener noreferrer nofollow"
+            tag["target"] = "_blank"
+            continue
+
+        if name == "img":
+            src = _to_str(tag.get("src", "")).strip()
+            if not _is_https_url(src):
+                tag.decompose()
+                continue
+
+            alt_text = _to_str(tag.get("alt", ""))
+            title_text = _to_str(tag.get("title", ""))
+            tag.attrs = {"src": src}
+            if alt_text:
+                tag["alt"] = alt_text
+            if title_text:
+                tag["title"] = title_text
+            tag["loading"] = "lazy"
+            continue
+
+        tag.attrs = {}
+
+    return str(soup)
+
+
+def _parse_duration_seconds(raw_value: Any) -> int | None:
+    """Parse duration values like '3720' or '01:02:00' into seconds."""
+
+    if raw_value is None:
+        return None
+
+    value = _to_str(raw_value).strip()
+    if not value:
+        return None
+
+    if value.isdigit():
+        return int(value)
+
+    parts = value.split(":")
+    if all(part.strip().isdigit() for part in parts):
+        numbers = [int(part.strip()) for part in parts]
+        if len(numbers) == 3:
+            return numbers[0] * 3600 + numbers[1] * 60 + numbers[2]
+        if len(numbers) == 2:
+            return numbers[0] * 60 + numbers[1]
+        if len(numbers) == 1:
+            return numbers[0]
+    return None
+
+
+def _infer_media_kind(url: str, mime_type: str) -> Literal["audio", "video", "youtube"] | None:
+    """Infer media kind from URL/mime hints."""
+
+    lower_url = url.lower()
+    lower_mime = mime_type.lower()
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+
+    if "youtube.com" in host or "youtu.be" in host:
+        return "youtube"
+
+    if lower_mime.startswith("audio/"):
+        return "audio"
+    if lower_mime.startswith("video/"):
+        return "video"
+
+    if any(lower_url.endswith(ext) for ext in (".mp3", ".m4a", ".aac", ".ogg", ".wav", ".flac")):
+        return "audio"
+    if any(lower_url.endswith(ext) for ext in (".mp4", ".m4v", ".mov", ".webm", ".mkv")):
+        return "video"
+
+    return None
+
+
+def _extract_media_assets(
+    entry: Any,
+    canonical_url: str,
+    content_html: str,
+) -> list[MediaAsset]:
+    """Extract mp3/mp4/youtube media assets from feed entry metadata/content."""
+
+    seen_urls: set[str] = set()
+    assets: list[MediaAsset] = []
+
+    def add_candidate(url: str, mime_type: str, title: str, duration: int | None) -> None:
+        clean_url = _to_str(url).strip()
+        if not _is_https_url(clean_url):
+            return
+        if clean_url in seen_urls:
+            return
+
+        media_kind = _infer_media_kind(clean_url, _to_str(mime_type))
+        if media_kind is None:
+            return
+
+        seen_urls.add(clean_url)
+        assets.append(
+            MediaAsset(
+                kind=media_kind,
+                url=clean_url,
+                mime_type=_to_str(mime_type),
+                title=_to_str(title),
+                duration_seconds=duration,
+            )
+        )
+
+    duration_seconds = _parse_duration_seconds(
+        getattr(entry, "itunes_duration", None) or getattr(entry, "duration", None)
+    )
+    title = _to_str(getattr(entry, "title", ""))
+
+    enclosures = getattr(entry, "enclosures", []) or []
+    for enclosure in enclosures:
+        if isinstance(enclosure, dict):
+            add_candidate(
+                enclosure.get("href", enclosure.get("url", "")),
+                enclosure.get("type", ""),
+                title,
+                duration_seconds,
+            )
+
+    media_content = getattr(entry, "media_content", []) or []
+    for media in media_content:
+        if isinstance(media, dict):
+            add_candidate(
+                media.get("url", ""),
+                media.get("type", ""),
+                title,
+                duration_seconds,
+            )
+
+    links = getattr(entry, "links", []) or []
+    for link in links:
+        if isinstance(link, dict):
+            rel = _to_str(link.get("rel", "")).lower()
+            if rel in {"enclosure", "alternate"}:
+                add_candidate(
+                    link.get("href", ""),
+                    link.get("type", ""),
+                    title,
+                    duration_seconds,
+                )
+
+    add_candidate(canonical_url, "", title, duration_seconds)
+
+    if content_html:
+        soup = BeautifulSoup(content_html, "html.parser")
+        for anchor in soup.find_all("a", href=True):
+            add_candidate(_to_str(anchor.get("href", "")), "", title, duration_seconds)
+        for iframe in soup.find_all("iframe", src=True):
+            add_candidate(_to_str(iframe.get("src", "")), "video/mp4", title, duration_seconds)
+
+    return assets
 
 
 def article_filepath(
@@ -874,7 +1251,7 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
         title = getattr(entry, "title", "Untitled") or "Untitled"
         link = getattr(entry, "link", "") or ""
         author = getattr(entry, "author", "Unknown") or "Unknown"
-        summary = getattr(entry, "summary", "") or ""
+        summary = _html_to_plain_text(_to_str(getattr(entry, "summary", "") or ""))
         if len(summary) > 500:
             summary = summary[:497] + "..."
         content_html = _extract_entry_content(entry)
@@ -902,11 +1279,28 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
                 if author == "Unknown" and page_meta.get("author"):
                     author = page_meta["author"]
                 if not summary and page_meta.get("description"):
-                    summary = page_meta["description"]
+                    summary = _html_to_plain_text(page_meta["description"])
             except Exception:
                 pass  # enrichment is best-effort
 
+        content_html = _sanitize_content_html(_to_str(content_html))
+
         # ── Build & validate Article ────────────────────────────────────────
+        media_assets = _extract_media_assets(
+            entry=entry,
+            canonical_url=link,
+            content_html=content_html,
+        )
+        has_audio = any(asset.kind == "audio" for asset in media_assets)
+        has_video = any(asset.kind in {"video", "youtube"} for asset in media_assets)
+        content_kind: Literal["article", "podcast", "video"]
+        if has_audio:
+            content_kind = "podcast"
+        elif has_video:
+            content_kind = "video"
+        else:
+            content_kind = "article"
+
         try:
             article = Article(
                 title=title,
@@ -924,6 +1318,8 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
                 fetched_at=now_iso,
                 source_opml=source_opml,
                 guid=guid,
+                content_kind=content_kind,
+                media_assets=media_assets,
             )
         except Exception as exc:
             errors.append(f"Validation error for '{title}': {exc}")
@@ -1151,8 +1547,54 @@ async def save_article(args: dict[str, Any]) -> dict[str, Any]:
 
     Returns JSON with keys: saved (bool), path, feed_name, title, error (if any)
     """
+    sanitized_args = dict(args)
+    sanitized_args["summary"] = _html_to_plain_text(_to_str(args.get("summary", "")))
+    sanitized_args["content_html"] = _sanitize_content_html(
+        _to_str(args.get("content_html", ""))
+    )
+    media_assets_in = args.get("media_assets", [])
+    sanitized_media_assets: list[dict[str, Any]] = []
+    if isinstance(media_assets_in, list):
+        for item in media_assets_in:
+            if not isinstance(item, dict):
+                continue
+            media_url = _to_str(item.get("url", "")).strip()
+            if not _is_https_url(media_url):
+                continue
+            media_mime = _to_str(item.get("mime_type", ""))
+            media_kind = _to_str(item.get("kind", "")).strip().lower()
+            inferred_kind = _infer_media_kind(media_url, media_mime)
+            if media_kind not in {"audio", "video", "youtube"}:
+                media_kind = inferred_kind or "video"
+            sanitized_media_assets.append(
+                {
+                    "kind": media_kind,
+                    "url": media_url,
+                    "mime_type": media_mime,
+                    "title": _to_str(item.get("title", "")),
+                    "duration_seconds": _parse_duration_seconds(
+                        item.get("duration_seconds", None)
+                    ),
+                }
+            )
+    sanitized_args["media_assets"] = sanitized_media_assets
+
+    explicit_kind = _to_str(args.get("content_kind", "")).strip().lower()
+    if explicit_kind in {"article", "podcast", "video"}:
+        sanitized_args["content_kind"] = explicit_kind
+    else:
+        if any(asset.get("kind") == "audio" for asset in sanitized_media_assets):
+            sanitized_args["content_kind"] = "podcast"
+        elif any(
+            asset.get("kind") in {"video", "youtube"}
+            for asset in sanitized_media_assets
+        ):
+            sanitized_args["content_kind"] = "video"
+        else:
+            sanitized_args["content_kind"] = "article"
+
     try:
-        article = Article(**args)
+        article = Article(**sanitized_args)
     except Exception as exc:
         return _text_result(
             {"error": f"Validation failed: {exc}", "saved": False}
@@ -1398,6 +1840,8 @@ RULES
 async def main() -> None:
     """Run the agentic RSS feed fetcher workflow."""
 
+    vllm_process, llm_endpoint = configure_llm_runtime()
+
     print("=" * 70)
     print("  RSS Newspaper — Agentic Fetcher")
     print("=" * 70)
@@ -1405,7 +1849,10 @@ async def main() -> None:
     print(f"  Data dir:     {DATA_DIR}")
     print(f"  Articles dir: {ARTICLES_DIR}")
     print(f"  Cutoff:       last {CUTOFF_DAYS} days")
-    print(f"  LLM endpoint: {os.environ.get('ANTHROPIC_BASE_URL', '(default)')}")
+    print(f"  LLM endpoint: {llm_endpoint}")
+    print(f"  Model:        {os.environ.get('MODEL', '(default)')}")
+    if vllm_process is not None:
+        print(f"  Runtime:      vLLM (pid={vllm_process.pid})")
     print("=" * 70)
     print()
 
@@ -1416,6 +1863,7 @@ async def main() -> None:
     options = ClaudeAgentOptions(
         system_prompt=SYSTEM_PROMPT,
         mcp_servers={"rss_tools": rss_server},
+        model=os.environ.get("MODEL"),
         allowed_tools=[
             # Custom MCP tools
             "mcp__rss_tools__parse_opml_files",
@@ -1445,56 +1893,62 @@ async def main() -> None:
     # ── Run agent ───────────────────────────────────────────────────────────
     feeds_processed = 0
 
-    async with ClaudeSDKClient(options=options) as client:
-        await client.query(prompt)
+    try:
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(prompt)
 
-        async for message in client.receive_messages():
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        print(f"\n[Agent] {block.text}")
-                    elif isinstance(block, ToolUseBlock):
-                        tool_name_short = block.name.split("__")[-1]
-                        input_preview = json.dumps(block.input)
-                        if len(input_preview) > 120:
-                            input_preview = input_preview[:117] + "..."
-                        print(f"  → {tool_name_short}({input_preview})")
-                        if tool_name_short == "process_single_feed":
-                            feeds_processed += 1
-                            print(
-                                f"    [feed #{feeds_processed}: "
-                                f"{block.input.get('feed_name', '?')}]"
-                            )
-                    elif isinstance(block, ToolResultBlock):
-                        # Summarise tool results concisely
-                        if block.content and isinstance(block.content, str):
-                            try:
-                                data = json.loads(block.content)
-                                if "new_saved" in data:
-                                    print(
-                                        f"    ✓ saved={data['new_saved']}  "
-                                        f"dupes={data.get('duplicates_skipped', 0)}  "
-                                        f"status={data.get('status', '?')}"
-                                    )
-                            except (json.JSONDecodeError, TypeError):
-                                pass
+            async for message in client.receive_messages():
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            print(f"\n[Agent] {block.text}")
+                        elif isinstance(block, ToolUseBlock):
+                            tool_name_short = block.name.split("__")[-1]
+                            input_preview = json.dumps(block.input)
+                            if len(input_preview) > 120:
+                                input_preview = input_preview[:117] + "..."
+                            print(f"  → {tool_name_short}({input_preview})")
+                            if tool_name_short == "process_single_feed":
+                                feeds_processed += 1
+                                print(
+                                    f"    [feed #{feeds_processed}: "
+                                    f"{block.input.get('feed_name', '?')}]"
+                                )
+                        elif isinstance(block, ToolResultBlock):
+                            # Summarise tool results concisely
+                            if block.content and isinstance(block.content, str):
+                                try:
+                                    data = json.loads(block.content)
+                                    if "new_saved" in data:
+                                        print(
+                                            f"    ✓ saved={data['new_saved']}  "
+                                            f"dupes={data.get('duplicates_skipped', 0)}  "
+                                            f"status={data.get('status', '?')}"
+                                        )
+                                except (json.JSONDecodeError, TypeError):
+                                    pass
 
-            elif isinstance(message, ResultMessage):
-                print()
-                print("=" * 70)
-                print(f"  Workflow finished: {message.subtype}")
-                print(f"  Duration:  {message.duration_ms / 1000:.1f}s")
-                print(f"  Turns:     {message.num_turns}")
-                if message.total_cost_usd is not None:
-                    print(f"  Cost:      ${message.total_cost_usd:.4f}")
-                if message.result:
-                    # Print the final summary (truncate if very long)
-                    result_text = message.result
-                    if len(result_text) > 2000:
-                        result_text = result_text[:2000] + "\n... (truncated)"
-                    print(f"\n{result_text}")
-                print("=" * 70)
-                break
+                elif isinstance(message, ResultMessage):
+                    print()
+                    print("=" * 70)
+                    print(f"  Workflow finished: {message.subtype}")
+                    print(f"  Duration:  {message.duration_ms / 1000:.1f}s")
+                    print(f"  Turns:     {message.num_turns}")
+                    if message.total_cost_usd is not None:
+                        print(f"  Cost:      ${message.total_cost_usd:.4f}")
+                    if message.result:
+                        # Print the final summary (truncate if very long)
+                        result_text = message.result
+                        if len(result_text) > 2000:
+                            result_text = result_text[:2000] + "\n... (truncated)"
+                        print(f"\n{result_text}")
+    finally:
+        if vllm_process is not None and vllm_process.poll() is None:
+            vllm_process.terminate()
+            try:
+                vllm_process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                vllm_process.kill()
 
     print(f"\nTotal feeds dispatched: {feeds_processed}")
     print(f"Article files at: {ARTICLES_DIR}")
