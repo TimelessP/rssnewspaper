@@ -1476,9 +1476,17 @@ def _probe_feed_url(feed_url: str) -> tuple[int | None, str]:
                     "Glob pattern relative to the data/ directory to match "
                     "OPML files, e.g. 'feed*.opml' or '*.opml'"
                 ),
+            },
+            "page": {
+                "type": "integer",
+                "description": "1-based page number for paginating subscriptions",
+            },
+            "page_size": {
+                "type": "integer",
+                "description": "Number of subscriptions to return per page",
             }
         },
-        "required": ["glob_pattern"],
+        "required": ["glob_pattern", "page", "page_size"],
     },
 )
 async def parse_opml_files(args: dict[str, Any]) -> dict[str, Any]:
@@ -1491,6 +1499,11 @@ async def parse_opml_files(args: dict[str, Any]) -> dict[str, Any]:
         subscriptions - list of {name, xml_url, category, source_file}
     """
     pattern = args["glob_pattern"]
+    try:
+        page = _require_positive_int(args["page"], "page")
+        page_size = _require_positive_int(args["page_size"], "page_size")
+    except (KeyError, ValueError) as exc:
+        return _text_result({"error": str(exc)})
     opml_paths = sorted(glob.glob(str(DATA_DIR / pattern)))
 
     if not opml_paths:
@@ -1519,13 +1532,15 @@ async def parse_opml_files(args: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:
             subscriptions.append({"error": f"Failed to parse {fpath}: {exc}"})
 
+    valid_subscriptions = [s for s in subscriptions if "xml_url" in s]
+    subscriptions_page, pagination = _paginate_items(valid_subscriptions, page, page_size)
+
     return _text_result(
         {
             "opml_files_found": len(opml_paths),
-            "total_subscriptions": len(
-                [s for s in subscriptions if "xml_url" in s]
-            ),
-            "subscriptions": subscriptions,
+            "total_subscriptions": len(valid_subscriptions),
+            "subscriptions": subscriptions_page,
+            "pagination": pagination,
         }
     )
 
@@ -1557,8 +1572,16 @@ async def parse_opml_files(args: dict[str, Any]) -> dict[str, Any]:
                 "type": "string",
                 "description": "Filename of the OPML file this feed came from",
             },
+            "page": {
+                "type": "integer",
+                "description": "1-based page number for paginating tool output lists",
+            },
+            "page_size": {
+                "type": "integer",
+                "description": "Number of list items to return per page",
+            },
         },
-        "required": ["feed_name", "feed_url", "category", "source_opml"],
+        "required": ["feed_name", "feed_url", "category", "source_opml", "page", "page_size"],
     },
 )
 async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
@@ -1574,6 +1597,11 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
     feed_url: str = args["feed_url"]
     category: str = args["category"]
     source_opml: str = args["source_opml"]
+    try:
+        page = _require_positive_int(args["page"], "page")
+        page_size = _require_positive_int(args["page_size"], "page_size")
+    except (KeyError, ValueError) as exc:
+        return _text_result({"error": str(exc)})
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=CUTOFF_DAYS)
     feed_slug = slugify(feed_name)
@@ -1799,6 +1827,11 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:
             errors.append(f"Save error for '{title}': {exc}")
 
+    errors_page, errors_pagination = _paginate_items(errors, page, page_size)
+    saved_articles_page, saved_articles_pagination = _paginate_items(
+        saved_articles, page, page_size
+    )
+
     return _text_result(
         {
             "feed_name": feed_name,
@@ -1816,8 +1849,10 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
             "old_skipped": skipped_old,
             "enriched_fields": enriched_count,
             "error_count": len(errors),
-            "errors": errors[:5],  # cap for brevity
-            "saved_articles": saved_articles,
+            "errors": errors_page,
+            "errors_pagination": errors_pagination,
+            "saved_articles": saved_articles_page,
+            "saved_articles_pagination": saved_articles_pagination,
         }
     )
 
@@ -1836,9 +1871,17 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
             "url": {
                 "type": "string",
                 "description": "The full URL of the web page to fetch and scrape",
+            },
+            "page": {
+                "type": "integer",
+                "description": "1-based page number for body HTML pagination",
+            },
+            "page_size": {
+                "type": "integer",
+                "description": "Characters per page for body HTML pagination",
             }
         },
-        "required": ["url"],
+        "required": ["url", "page", "page_size"],
     },
 )
 async def extract_page_metadata(args: dict[str, Any]) -> dict[str, Any]:
@@ -1850,6 +1893,11 @@ async def extract_page_metadata(args: dict[str, Any]) -> dict[str, Any]:
         site_name, body_html_preview, error (if any)
     """
     url = args["url"]
+    try:
+        page = _require_positive_int(args["page"], "page")
+        page_size = _require_positive_int(args["page_size"], "page_size")
+    except (KeyError, ValueError) as exc:
+        return _text_result({"error": str(exc)})
     try:
         resp = requests.get(
             url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, allow_redirects=True
@@ -1898,6 +1946,8 @@ async def extract_page_metadata(args: dict[str, Any]) -> dict[str, Any]:
             body_html = str(el)[:3000]
             break
 
+    body_html_page, body_html_pagination = _paginate_text(body_html, page, page_size)
+
     return _text_result(
         {
             "url": url,
@@ -1908,7 +1958,8 @@ async def extract_page_metadata(args: dict[str, Any]) -> dict[str, Any]:
             "description": og.get("description", ""),
             "author": og.get("author", ""),
             "site_name": og.get("site_name", ""),
-            "body_html_preview": body_html[:2000],
+            "body_html_page": body_html_page,
+            "body_html_pagination": body_html_pagination,
         }
     )
 
@@ -1984,6 +2035,14 @@ async def extract_page_metadata(args: dict[str, Any]) -> dict[str, Any]:
                 "type": "string",
                 "description": "Globally unique identifier for the article",
             },
+            "page": {
+                "type": "integer",
+                "description": "1-based page number for paginating save result payload",
+            },
+            "page_size": {
+                "type": "integer",
+                "description": "Number of result records to return per page",
+            },
         },
         "required": [
             "title",
@@ -2001,6 +2060,8 @@ async def extract_page_metadata(args: dict[str, Any]) -> dict[str, Any]:
             "fetched_at",
             "source_opml",
             "guid",
+            "page",
+            "page_size",
         ],
     },
 )
@@ -2010,7 +2071,15 @@ async def save_article(args: dict[str, Any]) -> dict[str, Any]:
 
     Returns JSON with keys: saved (bool), path, feed_name, title, error (if any)
     """
+    try:
+        page = _require_positive_int(args["page"], "page")
+        page_size = _require_positive_int(args["page_size"], "page_size")
+    except (KeyError, ValueError) as exc:
+        return _text_result({"error": str(exc), "saved": False})
+
     sanitized_args = dict(args)
+    sanitized_args.pop("page", None)
+    sanitized_args.pop("page_size", None)
     sanitized_args["summary"] = _html_to_plain_text(_to_str(args.get("summary", "")))
     sanitized_args["content_html"] = _sanitize_content_html(
         _to_str(args.get("content_html", ""))
@@ -2071,12 +2140,19 @@ async def save_article(args: dict[str, Any]) -> dict[str, Any]:
     with open(fpath, "w", encoding="utf-8") as f:
         json.dump(article.model_dump(), f, indent=2, ensure_ascii=False)
 
+    saved_payload = {
+        "saved": True,
+        "path": str(fpath),
+        "feed_name": article.feed_name,
+        "title": article.title,
+    }
+    result_page, pagination = _paginate_items([saved_payload], page, page_size)
+
     return _text_result(
         {
-            "saved": True,
-            "path": str(fpath),
-            "feed_name": article.feed_name,
-            "title": article.title,
+            **saved_payload,
+            "result_page": result_page,
+            "pagination": pagination,
         }
     )
 
@@ -2094,9 +2170,17 @@ async def save_article(args: dict[str, Any]) -> dict[str, Any]:
             "feed_name": {
                 "type": "string",
                 "description": "Human-readable name of the feed to list articles for",
+            },
+            "page": {
+                "type": "integer",
+                "description": "1-based page number for paginating article file list",
+            },
+            "page_size": {
+                "type": "integer",
+                "description": "Number of articles to return per page",
             }
         },
-        "required": ["feed_name"],
+        "required": ["feed_name", "page", "page_size"],
     },
 )
 async def list_feed_articles(args: dict[str, Any]) -> dict[str, Any]:
@@ -2106,6 +2190,11 @@ async def list_feed_articles(args: dict[str, Any]) -> dict[str, Any]:
         feed_name, feed_dir, exists, article_count, articles[]
     """
     feed_name = args["feed_name"]
+    try:
+        page = _require_positive_int(args["page"], "page")
+        page_size = _require_positive_int(args["page_size"], "page_size")
+    except (KeyError, ValueError) as exc:
+        return _text_result({"error": str(exc)})
     feed_dir = ARTICLES_DIR / slugify(feed_name)
 
     if not feed_dir.exists():
@@ -2136,12 +2225,15 @@ async def list_feed_articles(args: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             articles.append({"filename": json_file.name, "error": "unreadable"})
 
+    articles_page, pagination = _paginate_items(articles, page, page_size)
+
     return _text_result(
         {
             "feed_name": feed_name,
             "exists": True,
             "article_count": len(articles),
-            "articles": articles,
+            "articles": articles_page,
+            "pagination": pagination,
         }
     )
 
@@ -2163,9 +2255,17 @@ async def list_feed_articles(args: dict[str, Any]) -> dict[str, Any]:
                     "If true, include per-feed article counts. "
                     "If false, only return aggregate totals."
                 ),
+            },
+            "page": {
+                "type": "integer",
+                "description": "1-based page number for paginating per-feed detail",
+            },
+            "page_size": {
+                "type": "integer",
+                "description": "Number of per-feed records to return per page",
             }
         },
-        "required": ["include_per_feed_detail"],
+        "required": ["include_per_feed_detail", "page", "page_size"],
     },
 )
 async def get_run_statistics(args: dict[str, Any]) -> dict[str, Any]:
@@ -2176,6 +2276,11 @@ async def get_run_statistics(args: dict[str, Any]) -> dict[str, Any]:
         missing_content_count, per_feed (optional)
     """
     include_detail = args["include_per_feed_detail"]
+    try:
+        page = _require_positive_int(args["page"], "page")
+        page_size = _require_positive_int(args["page_size"], "page_size")
+    except (KeyError, ValueError) as exc:
+        return _text_result({"error": str(exc)})
 
     if not ARTICLES_DIR.exists():
         return _text_result(
@@ -2215,7 +2320,9 @@ async def get_run_statistics(args: dict[str, Any]) -> dict[str, Any]:
         "missing_content_count": missing_content,
     }
     if include_detail:
-        result["per_feed"] = per_feed
+        per_feed_page, pagination = _paginate_items(per_feed, page, page_size)
+        result["per_feed"] = per_feed_page
+        result["pagination"] = pagination
     return _text_result(result)
 
 
@@ -2227,6 +2334,81 @@ def _text_result(data: Any) -> dict[str, Any]:
     return {
         "content": [{"type": "text", "text": json.dumps(data, indent=2)}]
     }
+
+
+def _require_positive_int(raw_value: Any, field_name: str) -> int:
+    """Convert a value to a positive integer, otherwise raise ValueError."""
+
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field_name} must be a positive integer.")
+    if value <= 0:
+        raise ValueError(f"{field_name} must be a positive integer.")
+    return value
+
+
+def _paginate_items(
+    items: list[Any],
+    page: int,
+    page_size: int,
+) -> tuple[list[Any], dict[str, Any]]:
+    """Paginate a list and return (page_items, pagination_metadata)."""
+
+    safe_page = _require_positive_int(page, "page")
+    safe_page_size = _require_positive_int(page_size, "page_size")
+    total_items = len(items)
+    total_pages = max(1, (total_items + safe_page_size - 1) // safe_page_size)
+    current_page = min(safe_page, total_pages)
+
+    start = (current_page - 1) * safe_page_size
+    end = start + safe_page_size
+    page_items = items[start:end]
+
+    pagination = {
+        "page": current_page,
+        "page_size": safe_page_size,
+        "total_items": total_items,
+        "total_pages": total_pages,
+        "has_next_page": current_page < total_pages,
+        "has_prev_page": current_page > 1,
+        "next_page": current_page + 1 if current_page < total_pages else None,
+        "prev_page": current_page - 1 if current_page > 1 else None,
+    }
+    return page_items, pagination
+
+
+def _paginate_text(
+    text: str,
+    page: int,
+    page_size: int,
+) -> tuple[str, dict[str, Any]]:
+    """Paginate text by characters and return (text_page, pagination_metadata)."""
+
+    safe_text = text or ""
+    safe_page = _require_positive_int(page, "page")
+    chars_per_page = _require_positive_int(page_size, "page_size")
+
+    total_chars = len(safe_text)
+    total_pages = max(1, (total_chars + chars_per_page - 1) // chars_per_page)
+    current_page = min(safe_page, total_pages)
+    start = (current_page - 1) * chars_per_page
+    end = min(start + chars_per_page, total_chars)
+
+    page_text = safe_text[start:end]
+    pagination = {
+        "page": current_page,
+        "page_size": chars_per_page,
+        "total_chars": total_chars,
+        "total_pages": total_pages,
+        "has_next_page": current_page < total_pages,
+        "has_prev_page": current_page > 1,
+        "next_page": current_page + 1 if current_page < total_pages else None,
+        "prev_page": current_page - 1 if current_page > 1 else None,
+        "char_start": start,
+        "char_end": end,
+    }
+    return page_text, pagination
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2261,13 +2443,16 @@ WORKFLOW — Follow these steps in strict, numbered order:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### Step 1: DISCOVERY
-Call `mcp__rss_tools__parse_opml_files` with glob_pattern="feed*.opml" to get
-every feed subscription.  Note the total count.
+Call `mcp__rss_tools__parse_opml_files` with glob_pattern="feed*.opml",
+page=1, page_size=50. Then continue paging with page=2,3,... while
+pagination.has_next_page is true. Aggregate subscriptions across pages.
+Do NOT repeat the same page request unless there is an explicit error retry.
+Note the total count.
 
 ### Step 2: PROCESS EACH FEED
 For **every** subscription returned in Step 1, call
 `mcp__rss_tools__process_single_feed` with the feed's name, url, category,
-and source_opml.  This single call will:
+source_opml, page=1, page_size=50.  This single call will:
   • fetch the feed
   • filter to the last 3 days
   • skip duplicates already on disk
@@ -2278,7 +2463,7 @@ Process feeds one by one.  If a feed errors, note it and continue to the next.
 
 ### Step 3: SUMMARY
 After ALL feeds are processed, call `mcp__rss_tools__get_run_statistics` with
-include_per_feed_detail=true and present a clear summary:
+include_per_feed_detail=true, page=1, page_size=100 and present a clear summary:
   • Total feeds attempted
   • Total new articles saved
   • Total duplicates skipped
@@ -2292,6 +2477,10 @@ RULES
 • If a feed returns 0 recent articles, that is fine — just move on.
 • Be efficient: each feed needs only ONE tool call (process_single_feed).
 • Keep going until every feed in the OPML has been processed.
+• ALL tools are paginated. Always pass page and page_size.
+• For any paginated result, continue page-by-page until has_next_page is false.
+• Keep responses within the token limit, especially for feeds with many articles.  If needed, truncate article summaries to fit within the limit, but do not skip entire articles.
+  • Response limit: """ + str(os.environ.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS", 32768)) + """ tokens.
 """
 
 
