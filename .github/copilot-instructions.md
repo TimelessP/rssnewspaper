@@ -1,21 +1,64 @@
-# RSS Newpspaper Instructions
+# RSS Newspaper Instructions
 
-## Origins
+## Project Overview
 
-This project initially created with the following prompt:
+RSS Newspaper is a two-stage pipeline:
 
-```
-Let's create a local claude sdk agent who has a workflow of taking the supplied data/feed*.opml files, and diligently working through each and every subscription to fetch the feed data, create a fully-populated json file for articles from the last 3 days only, and where it's missing information, do some web searches to find those missing bits, with a goal of creating enough data in the json for a web page to show a "card" for the article - i.e. a title image, the article's canonical link, the article contents and metadata, etc. Stored in data/articles/feed-name/yyyy-mm-dd_HHmmss-feedname-articletitle.json. Re-runs are expected daily, so it must not create duplicate articles in those json files and directories. The agent's workflow must be clearly worked out so that it is broken down into disciplined steps.
+1. **`agentic_fetcher.py`** — A Claude Agent SDK agent that parses OPML subscription lists, fetches RSS/Atom feeds, enriches missing metadata via page scraping, sanitizes HTML, detects media assets (MP3/MP4/YouTube), and saves fully-populated Article JSON files under `data/articles/<feed-slug>/`.
 
-Agent SDK documentation starts here: https://platform.claude.com/docs/en/agent-sdk/overview#python
+2. **`generate_newspaper.py`** — A Jinja2-based HTML generator that reads all article JSON files and renders a single self-contained HTML newspaper with an old-time newspaper aesthetic (desaturated palette, serif typography, inline SVG icons). Output goes to `data/newspapers/yyyy-mm-dd_HHmm/`.
 
-We'll call this agentic_fetcher.py.
+## Key Files
 
-Create all the tools the agents in the workflow will need to do the job well. Including, if possible, the BaseModel -derived result class so that all the JSON data files are following the exact same schema. Use annotations on tool parameters to help the agents. Use Field() descriptions on BaseModel -inherited classes' fields to help the agents. All tool parameters MUST be non-optional (no defaults for tool function parameters). Use docstrings on tool functions to help the agents.
+| File | Purpose |
+|---|---|
+| `agentic_fetcher.py` | Agentic RSS fetcher (~2700 lines). Uses Claude Agent SDK + in-process MCP tools. |
+| `generate_newspaper.py` | Newspaper HTML generator (~500 lines). Loads JSON, enriches for display, renders Jinja2. |
+| `templates/newspaper.html.j2` | Self-contained HTML template (~1800 lines). All CSS, JS, SVG icons inline. |
+| `data/feed*.opml` | OPML subscription files (input for the fetcher). |
+| `data/articles/` | Article JSON output directory (one subdirectory per feed). |
+| `data/newspapers/` | Generated newspaper output directory (timestamped subdirectories). |
+| `example.env` | Environment variable reference (copy to `.env`). |
+| `requirements.txt` | Python dependencies. |
 
-We will be using LM Studio locally, and example.env has the settings, and has already been copied as-is to .env.
-```
+## Architecture
 
-# Development Instructions
+### Article JSON Schema (Pydantic `Article` model)
 
-Remember to activate the .venv.
+18 fields: `title`, `canonical_url`, `feed_name`, `feed_url`, `category`, `author`, `published_date`, `summary`, `content_html`, `image_url`, `tags`, `language`, `fetched_at`, `source_opml`, `guid`, `content_kind` (article/podcast/video), `media_assets[]`.
+
+`media_assets` entries: `kind` (audio/video/youtube), `url`, `mime_type`, `title`, `duration_seconds`.
+
+### Newspaper Template
+
+- **CSS**: CSS custom properties throughout (`--paper`, `--ink`, `--accent`, etc.). Base font size is `32px` (rem-based scaling). Responsive grid layout.
+- **HTML structure**: Masthead → sticky toolbar (search, filter toggle, view toggle, count) → collapsible filter panel (categories, content types, media filters, tag cloud) → category sections with card grids → article modal → back-to-top.
+- **JS**: Self-contained IIFE. Multi-dimensional filtering (category × content kind × media type × tag × text search). Filter panel is collapsible with active-filter hints. Modal renders full article content including media asset links.
+- **All inline**: No external CSS/JS/font dependencies. SVG icon sprite defined in `<defs>`. Only external resources are article images.
+
+### Generator Enrichment
+
+`generate_newspaper.py` computes per-article display fields before passing to the template:
+- `_idx`: sequential index for JS article lookup
+- `published_display`: human-readable date string
+- `summary_plain`: HTML-stripped summary for safe `data-searchable` attributes
+- `_has_audio`, `_has_video`, `_has_youtube`: boolean media flags
+- `_media_flags`: space-separated media type string for `data-media` attribute
+
+Template context also includes: `top_tags` (top 25 tags with counts), `content_counts` (article/podcast/video/media totals), `category_icons` mapping.
+
+## Development Instructions
+
+- Always activate the venv: `source .venv/bin/activate`
+- Jinja2 environment uses `autoescape=True` — mark trusted HTML with `|safe`
+- The template is self-contained; test by opening the output `.html` file directly in a browser
+- Regenerate the newspaper: `python generate_newspaper.py`
+- Run the fetcher: `python agentic_fetcher.py`
+
+## Conventions
+
+- Tool function parameters in `agentic_fetcher.py` must be non-optional (no defaults). Use `Field()` descriptions and docstrings to guide the agent.
+- All Pydantic models use `Field()` with descriptions.
+- `content_html` is sanitized before saving (no scripts, styles, iframes, forms; HTTPS-only links/images).
+- Articles are deduplicated by GUID. Re-runs never create duplicate files.
+- The fetcher supports chunked processing via `chunk_page`/`chunk_size` to stay within output token limits.

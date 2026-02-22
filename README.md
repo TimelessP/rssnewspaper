@@ -1,8 +1,14 @@
 # RSS Newspaper
 
-An agentic RSS/Atom feed fetcher powered by the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview). It autonomously works through OPML subscription lists, fetches recent articles, enriches missing metadata, sanitizes HTML for safe card rendering, and saves JSON files ready for article, podcast, or video cards.
+A two-stage pipeline that turns RSS/Atom subscriptions into a self-contained HTML newspaper with an old-time broadsheet aesthetic.
+
+1. **Agentic Fetcher** (`agentic_fetcher.py`) — A [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) agent that parses OPML subscription lists, fetches recent articles, enriches missing metadata via page scraping, sanitizes HTML, detects media assets (MP3/MP4/YouTube), and saves JSON files ready for article/podcast/video cards.
+
+2. **Newspaper Generator** (`generate_newspaper.py`) — Reads all article JSON files and renders a single self-contained HTML newspaper using Jinja2 — complete with search, multi-dimensional filtering, tag cloud, grid/headline views, and a full-article modal.
 
 ## How It Works
+
+### Stage 1 — Agentic Fetcher
 
 The agent follows a disciplined three-step workflow:
 
@@ -142,6 +148,71 @@ The agent exposes six tools via an in-process MCP server:
 
 The agent also has access to the built-in `WebSearch` and `WebFetch` tools for ad-hoc enrichment.
 
+## Stage 2 — Newspaper Generator
+
+Once articles are fetched, generate the newspaper:
+
+```bash
+python generate_newspaper.py
+```
+
+This will:
+
+1. **Load** all article JSON files from `data/articles/`.
+2. **Enrich** each article with display fields (formatted dates, plain-text summaries, media flags, sequential indices).
+3. **Extract** tag frequencies and content-type counts across the corpus.
+4. **Render** a single self-contained HTML file via the Jinja2 template at `templates/newspaper.html.j2`.
+5. **Write** the output to `data/newspapers/yyyy-mm-dd_HHmm/newspaper-yyyy-mm-dd_HHmm.html`.
+
+Open the generated `.html` file directly in any browser — no server required.
+
+### CLI Options
+
+```
+python generate_newspaper.py --help
+
+  --days N              Only include articles from the last N days
+  --articles-dir DIR    Custom articles directory
+  --output-dir DIR      Custom output root directory
+  --template-dir DIR    Custom templates directory
+  -v, --verbose         Enable debug logging
+```
+
+### Newspaper Features
+
+- **Old-time broadsheet aesthetic** — desaturated palette, serif typography, decorative flourishes, all via CSS custom properties.
+- **Sticky search bar** — full-text search across titles, authors, feeds, summaries, and tags. Press `/` to focus.
+- **Collapsible filter panel** — multi-dimensional filtering by category, content type (article/podcast/video), media type (MP3/YouTube), and tags. All filters compose together (AND logic). Active filters shown as badge hints when the panel is collapsed.
+- **Tag cloud** — top 25 tags with article counts, click to filter.
+- **Grid / headline views** — toggle between card grid and compact headline list.
+- **Article modal** — full content display with media asset links (MP3 play, YouTube watch), tags, and link to original.
+- **Fully self-contained** — all CSS, JS, and SVG icons are inline. No external dependencies. Only article images are external resources.
+- **Responsive** — scales from mobile to desktop with a 32px rem base for readability.
+
+### Template Architecture
+
+The Jinja2 template (`templates/newspaper.html.j2`, ~1800 lines) contains:
+
+- **CSS block** — custom properties, component styles, responsive breakpoints.
+- **SVG `<defs>`** — 19 icon symbols (newspaper, search, shield, podcast, video, etc.).
+- **HTML** — masthead, toolbar, filter panel, category sections with card grids, modal overlay, back-to-top button.
+- **Inline JSON** — `ARTICLES` array for JS article lookup (title, content, media assets, etc.).
+- **JS IIFE** — search, multi-dimensional filtering, view toggle, modal, keyboard shortcuts.
+
+The generator computes these enrichment fields per article before passing to the template:
+
+| Field | Description |
+|---|---|
+| `_idx` | Sequential index for JS lookup |
+| `published_display` | Human-readable date string |
+| `summary_plain` | HTML-stripped summary for `data-searchable` |
+| `_has_audio` | Boolean — has audio media asset |
+| `_has_video` | Boolean — has video media asset |
+| `_has_youtube` | Boolean — has YouTube media asset |
+| `_media_flags` | Space-separated media types for `data-media` attribute |
+
+Template context also receives: `top_tags` (top 25 tags with counts), `content_counts` (article/podcast/video/media totals), `category_icons` mapping.
+
 ## Prerequisites
 
 - Python 3.12+
@@ -163,6 +234,9 @@ source .venv/bin/activate
 
 # Run the fetcher
 python agentic_fetcher.py
+
+# Generate the newspaper
+python generate_newspaper.py
 ```
 
 ### Manual Setup
@@ -182,8 +256,11 @@ npm install -g @anthropic-ai/claude-code
 cp example.env .env
 # Edit .env if needed
 
-# Run
+# Fetch articles
 python agentic_fetcher.py
+
+# Generate the newspaper
+python generate_newspaper.py
 ```
 
 ## Configuration
@@ -247,17 +324,23 @@ Example: ~120 feeds × ~2 turns + overhead ≈ `300-500`.
 
 ```
 rssnewspaper/
-├── agentic_fetcher.py   # The agentic fetcher (entry point)
-├── dev-prepare.sh       # One-shot dev environment setup
-├── requirements.txt     # Python dependencies
-├── example.env          # Example environment config
-├── LICENSE              # MIT License
+├── agentic_fetcher.py       # Stage 1: Agentic RSS fetcher (entry point)
+├── generate_newspaper.py    # Stage 2: HTML newspaper generator
+├── templates/
+│   └── newspaper.html.j2    # Self-contained Jinja2 newspaper template
+├── dev-prepare.sh           # One-shot dev environment setup
+├── requirements.txt         # Python dependencies
+├── example.env              # Example environment config
+├── LICENSE                  # MIT License
 ├── README.md
 └── data/
-    ├── feeds-*.opml     # OPML subscription files
-    └── articles/        # Output directory (created automatically)
-        └── <feed-slug>/
-            └── <date>-<feed>-<title>.json
+    ├── feeds-*.opml         # OPML subscription files (fetcher input)
+    ├── articles/            # Article JSON output (one subdir per feed)
+    │   └── <feed-slug>/
+    │       └── <date>-<feed>-<title>.json
+    └── newspapers/          # Generated newspapers (timestamped subdirs)
+        └── yyyy-mm-dd_HHmm/
+            └── newspaper-yyyy-mm-dd_HHmm.html
 ```
 
 ## License
