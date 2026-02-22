@@ -30,6 +30,8 @@ import hashlib
 import json
 import os
 import re
+import socket
+import signal
 import subprocess
 import sys
 import time
@@ -127,6 +129,9 @@ STRIP_ENTIRELY_TAGS = {
     "math",
 }
 
+DEFAULT_VLLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
+DEFAULT_VLLM_SERVED_MODEL_NAME = "mistral-7b-instruct-v0_3"
+
 
 def _env_flag(name: str) -> bool:
     """Parse an environment variable as a boolean flag."""
@@ -135,13 +140,209 @@ def _env_flag(name: str) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-def _wait_for_vllm_ready(base_url: str, timeout_seconds: int) -> None:
+def _tail_text_file(path: Path, max_lines: int = 120) -> str:
+    """Return the tail of a UTF-8 text file for diagnostics."""
+
+    if not path.exists():
+        return "(no log output available)"
+
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return "(failed to read vLLM log file)"
+
+    if not lines:
+        return "(log file is empty)"
+    return "\n".join(lines[-max_lines:])
+
+
+def _collect_gpu_diagnostics() -> str:
+    """Collect best-effort GPU memory diagnostics via nvidia-smi."""
+
+    try:
+        gpu_mem = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,name,memory.total,memory.used,memory.free",
+                "--format=csv,noheader,nounits",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return "(GPU diagnostics unavailable: nvidia-smi not accessible)"
+
+    details: list[str] = []
+    if gpu_mem.stdout.strip():
+        details.append("GPU memory snapshot (index, name, total MiB, used MiB, free MiB):")
+        details.extend(f"  {line}" for line in gpu_mem.stdout.strip().splitlines())
+
+    try:
+        procs = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=pid,process_name,used_gpu_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        procs = None
+
+    process_lines = []
+    if procs is not None and procs.stdout.strip():
+        for raw in procs.stdout.strip().splitlines():
+            parts = [part.strip() for part in raw.split(",")]
+            if len(parts) < 3:
+                process_lines.append(f"  {raw}")
+                continue
+            pid, process_name, used_mem = parts[0], parts[1], parts[2]
+            cmdline = ""
+            try:
+                cmdline_raw = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode(
+                    "utf-8", errors="replace"
+                )
+                cmdline = cmdline_raw.strip()
+            except Exception:
+                cmdline = ""
+            if cmdline:
+                process_lines.append(
+                    f"  pid={pid} mem={used_mem}MiB name={process_name} cmd={cmdline}"
+                )
+            else:
+                process_lines.append(
+                    f"  pid={pid} mem={used_mem}MiB name={process_name}"
+                )
+
+    if process_lines:
+        details.append("GPU compute processes:")
+        details.extend(process_lines)
+
+    if not details:
+        return "(no GPU diagnostics available)"
+    return "\n".join(details)
+
+
+def _is_tcp_port_in_use(host: str, port: int) -> bool:
+    """Return True when a TCP port is already bound/listening."""
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex((host, port)) == 0
+
+
+def _choose_vllm_api_port(host: str, preferred_port: int, scan_limit: int) -> int:
+    """Pick a free API port, starting from preferred_port and scanning upward."""
+
+    for candidate in range(preferred_port, preferred_port + scan_limit + 1):
+        if not _is_tcp_port_in_use(host, candidate):
+            return candidate
+
+    raise RuntimeError(
+        f"Could not find a free TCP port for vLLM on {host} in range "
+        f"{preferred_port}-{preferred_port + scan_limit}."
+    )
+
+
+def _choose_vllm_master_port(
+    host: str,
+    preferred_port: int,
+    scan_limit: int,
+    reserved_port: int,
+) -> int:
+    """Pick a free vLLM distributed master port distinct from the API port."""
+
+    for candidate in range(preferred_port, preferred_port + scan_limit + 1):
+        if candidate == reserved_port:
+            continue
+        if not _is_tcp_port_in_use(host, candidate):
+            return candidate
+
+    raise RuntimeError(
+        f"Could not find a free vLLM master port on {host} in range "
+        f"{preferred_port}-{preferred_port + scan_limit} (excluding API port {reserved_port})."
+    )
+
+
+def _validate_hf_model_access(model_id: str, hf_token: str) -> None:
+    """Fail fast if a Hugging Face model ID is inaccessible or invalid."""
+
+    if Path(model_id).expanduser().exists():
+        return
+
+    if model_id.startswith("/") or model_id.startswith("./"):
+        return
+
+    headers: dict[str, str] = {}
+    if hf_token:
+        headers["Authorization"] = f"Bearer {hf_token}"
+
+    try:
+        response = requests.get(
+            f"https://huggingface.co/api/models/{model_id}",
+            headers=headers,
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Unable to validate Hugging Face model '{model_id}'. "
+            "Check network connectivity or set VLLM_MODEL to a local path."
+        ) from exc
+
+    if response.status_code == 200:
+        return
+
+    if response.status_code in {401, 403}:
+        raise RuntimeError(
+            f"Model '{model_id}' requires Hugging Face authentication or access approval. "
+            "Set VLLM_HF_TOKEN (or HF_TOKEN), or run `hf auth login`, then retry."
+        )
+
+    if response.status_code == 404:
+        raise RuntimeError(
+            f"Model '{model_id}' was not found on Hugging Face. "
+            "Set VLLM_MODEL to a valid public model id or a local model path."
+        )
+
+    raise RuntimeError(
+        f"Model validation failed for '{model_id}' (HTTP {response.status_code})."
+    )
+
+
+def _wait_for_vllm_ready(
+    base_url: str,
+    timeout_seconds: int,
+    process: subprocess.Popen[str],
+    log_path: Path,
+) -> None:
     """Wait until the local vLLM server responds on a health endpoint."""
 
-    deadline = time.monotonic() + timeout_seconds
+    deadline = None if timeout_seconds <= 0 else time.monotonic() + timeout_seconds
     probe_paths = ("/health", "/v1/models", "/version")
 
-    while time.monotonic() < deadline:
+    while deadline is None or time.monotonic() < deadline:
+        if process.poll() is not None:
+            log_tail = _tail_text_file(log_path)
+            memory_hint = ""
+            if "Free memory on device cuda" in log_tail:
+                memory_hint = (
+                    "\n\nDetected GPU memory pressure while starting vLLM. "
+                    "Free GPU memory, reduce VLLM_GPU_MEMORY_UTILIZATION, "
+                    "or use USE_VLLM=0 to run via another endpoint.\n\n"
+                    f"{_collect_gpu_diagnostics()}"
+                )
+            raise RuntimeError(
+                "vLLM exited during startup.\n\n"
+                "Last vLLM log lines:\n"
+                f"{log_tail}"
+                f"{memory_hint}"
+            )
+
         for path in probe_paths:
             try:
                 response = requests.get(
@@ -153,9 +354,47 @@ def _wait_for_vllm_ready(base_url: str, timeout_seconds: int) -> None:
                 continue
         time.sleep(1)
 
+    assert deadline is not None
     raise RuntimeError(
-        f"Timed out waiting for vLLM server at {base_url} after {timeout_seconds}s"
+        f"Timed out waiting for vLLM server at {base_url} after {timeout_seconds}s\n\n"
+        "Last vLLM log lines:\n"
+        f"{_tail_text_file(log_path)}"
     )
+
+
+def _stop_process_gracefully(process: subprocess.Popen[str], grace_seconds: int = 15) -> None:
+    """Terminate a subprocess and force-kill on timeout without raising cleanup errors."""
+
+    if process.poll() is not None:
+        return
+
+    try:
+        process_group_id = os.getpgid(process.pid)
+    except OSError:
+        process_group_id = None
+
+    if process_group_id is not None:
+        try:
+            os.killpg(process_group_id, signal.SIGTERM)
+        except OSError:
+            pass
+    else:
+        process.terminate()
+
+    try:
+        process.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        if process_group_id is not None:
+            try:
+                os.killpg(process_group_id, signal.SIGKILL)
+            except OSError:
+                pass
+        else:
+            process.kill()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def configure_llm_runtime() -> tuple[subprocess.Popen[str] | None, str]:
@@ -168,14 +407,42 @@ def configure_llm_runtime() -> tuple[subprocess.Popen[str] | None, str]:
                 os.environ["ANTHROPIC_API_KEY"] = token
         return None, os.environ.get("ANTHROPIC_BASE_URL", "(default)")
 
-    vllm_model = os.environ.get("VLLM_MODEL", "mistralai/ministral-3-3b")
-    served_model_name = os.environ.get("VLLM_SERVED_MODEL_NAME", "ministral-3-3b")
+    vllm_model = os.environ.get("VLLM_MODEL", DEFAULT_VLLM_MODEL)
+    served_model_name = os.environ.get(
+        "VLLM_SERVED_MODEL_NAME", DEFAULT_VLLM_SERVED_MODEL_NAME
+    )
     host = os.environ.get("VLLM_HOST", "127.0.0.1")
-    port = int(os.environ.get("VLLM_PORT", "8000"))
+    requested_port = int(os.environ.get("VLLM_PORT", "8000"))
+    port_scan_limit = int(os.environ.get("VLLM_PORT_SCAN_LIMIT", "20"))
+    port = _choose_vllm_api_port(host, requested_port, port_scan_limit)
+    requested_master_port = int(
+        os.environ.get("VLLM_MASTER_PORT", str(max(1024, requested_port + 100)))
+    )
+    master_port_scan_limit = int(os.environ.get("VLLM_MASTER_PORT_SCAN_LIMIT", "100"))
+    master_port = _choose_vllm_master_port(
+        host=host,
+        preferred_port=requested_master_port,
+        scan_limit=master_port_scan_limit,
+        reserved_port=port,
+    )
     max_model_len = max(20000, int(os.environ.get("VLLM_MAX_MODEL_LEN", "20000")))
+    gpu_memory_utilization = float(
+        os.environ.get("VLLM_GPU_MEMORY_UTILIZATION", "0.9")
+    )
     api_key = os.environ.get("VLLM_API_KEY", "dummy")
     tool_call_parser = os.environ.get("VLLM_TOOL_CALL_PARSER", "mistral")
-    wait_timeout_seconds = int(os.environ.get("VLLM_STARTUP_TIMEOUT", "300"))
+    wait_timeout_seconds = int(os.environ.get("VLLM_STARTUP_TIMEOUT", "1800"))
+    hf_token = os.environ.get("VLLM_HF_TOKEN", "").strip() or os.environ.get(
+        "HF_TOKEN", ""
+    ).strip()
+
+    if "/" in served_model_name:
+        raise RuntimeError(
+            "VLLM_SERVED_MODEL_NAME cannot contain '/'. Use an alias such as "
+            f"'{DEFAULT_VLLM_SERVED_MODEL_NAME}'."
+        )
+
+    _validate_hf_model_access(vllm_model, hf_token)
 
     endpoint = f"http://{host}:{port}"
     serve_cmd = [
@@ -186,30 +453,50 @@ def configure_llm_runtime() -> tuple[subprocess.Popen[str] | None, str]:
         host,
         "--port",
         str(port),
+        "--master-port",
+        str(master_port),
         "--served-model-name",
         served_model_name,
         "--max-model-len",
         str(max_model_len),
+        "--gpu-memory-utilization",
+        str(gpu_memory_utilization),
         "--api-key",
         api_key,
         "--enable-auto-tool-choice",
         "--tool-call-parser",
         tool_call_parser,
     ]
+    if hf_token:
+        serve_cmd.extend(["--hf-token", hf_token])
+
+    log_dir = PROJECT_ROOT / ".cache"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"vllm-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.log"
+    log_handle = log_path.open("w", encoding="utf-8")
 
     try:
-        process = subprocess.Popen(serve_cmd, cwd=str(PROJECT_ROOT), text=True)
+        process = subprocess.Popen(
+            serve_cmd,
+            cwd=str(PROJECT_ROOT),
+            text=True,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
     except FileNotFoundError as exc:
+        log_handle.close()
         raise RuntimeError(
             "USE_VLLM=1 but 'vllm' executable was not found. "
             "Install vLLM in the active environment."
         ) from exc
+    finally:
+        log_handle.close()
 
     try:
-        _wait_for_vllm_ready(endpoint, wait_timeout_seconds)
+        _wait_for_vllm_ready(endpoint, wait_timeout_seconds, process, log_path)
     except Exception:
-        process.terminate()
-        process.wait(timeout=15)
+        _stop_process_gracefully(process)
         raise
 
     os.environ["ANTHROPIC_BASE_URL"] = endpoint
@@ -219,6 +506,11 @@ def configure_llm_runtime() -> tuple[subprocess.Popen[str] | None, str]:
     os.environ.setdefault("ANTHROPIC_DEFAULT_SONNET_MODEL", served_model_name)
     os.environ.setdefault("ANTHROPIC_DEFAULT_HAIKU_MODEL", served_model_name)
     os.environ.setdefault("MODEL", served_model_name)
+    os.environ["VLLM_LOG_PATH"] = str(log_path)
+    os.environ["VLLM_REQUESTED_PORT"] = str(requested_port)
+    os.environ["VLLM_EFFECTIVE_PORT"] = str(port)
+    os.environ["VLLM_REQUESTED_MASTER_PORT"] = str(requested_master_port)
+    os.environ["VLLM_EFFECTIVE_MASTER_PORT"] = str(master_port)
     return process, endpoint
 
 
@@ -1853,6 +2145,21 @@ async def main() -> None:
     print(f"  Model:        {os.environ.get('MODEL', '(default)')}")
     if vllm_process is not None:
         print(f"  Runtime:      vLLM (pid={vllm_process.pid})")
+        requested_port = os.environ.get("VLLM_REQUESTED_PORT")
+        effective_port = os.environ.get("VLLM_EFFECTIVE_PORT")
+        if requested_port and effective_port and requested_port != effective_port:
+            print(f"  vLLM port:    requested {requested_port} → using {effective_port}")
+        requested_master_port = os.environ.get("VLLM_REQUESTED_MASTER_PORT")
+        effective_master_port = os.environ.get("VLLM_EFFECTIVE_MASTER_PORT")
+        if requested_master_port and effective_master_port:
+            if requested_master_port != effective_master_port:
+                print(
+                    "  vLLM master:  "
+                    f"requested {requested_master_port} → using {effective_master_port}"
+                )
+            else:
+                print(f"  vLLM master:  {effective_master_port}")
+        print(f"  vLLM logs:    {os.environ.get('VLLM_LOG_PATH', '(unknown)')}")
     print("=" * 70)
     print()
 
