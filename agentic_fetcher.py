@@ -33,6 +33,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
 
 import feedparser
 import requests
@@ -69,6 +70,8 @@ if not os.environ.get("ANTHROPIC_API_KEY"):
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_ROOT / "data"
 ARTICLES_DIR = DATA_DIR / "articles"
+ARCHIVE_DIR = DATA_DIR / "archive"
+RETIRED_FEEDS_OPML = ARCHIVE_DIR / "retired-feeds.opml"
 CUTOFF_DAYS = 3
 
 HTTP_HEADERS = {
@@ -81,6 +84,7 @@ HTTP_HEADERS = {
 
 # Timeout for HTTP requests (seconds)
 HTTP_TIMEOUT = 20
+PERMANENT_REDIRECT_CODES = {301, 308}
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -357,6 +361,256 @@ def _load_existing_guids(feed_slug: str) -> set[str]:
     return guids
 
 
+def _get_opml_path(source_opml: str) -> Path:
+    """Resolve an OPML filename to an absolute path under data/."""
+    return DATA_DIR / source_opml
+
+
+def _update_feed_url_in_opml(
+    source_opml: str,
+    feed_name: str,
+    old_feed_url: str,
+    new_feed_url: str,
+) -> bool:
+    """Update a feed xmlUrl in the source OPML file.
+
+    Matches primarily by xmlUrl, and prefers a matching feed title when
+    duplicates exist.
+    """
+    opml_path = _get_opml_path(source_opml)
+    if not opml_path.exists():
+        return False
+
+    try:
+        tree = ET.parse(opml_path)
+        root = tree.getroot()
+    except Exception:
+        return False
+
+    exact_match: ET.Element | None = None
+    fallback_match: ET.Element | None = None
+    for outline in root.iter("outline"):
+        xml_url = _to_str(outline.get("xmlUrl", ""))
+        if xml_url != old_feed_url:
+            continue
+        if fallback_match is None:
+            fallback_match = outline
+        if _to_str(outline.get("text", "")) == feed_name:
+            exact_match = outline
+            break
+
+    target = exact_match if exact_match is not None else fallback_match
+    if target is None:
+        return False
+
+    target.set("xmlUrl", new_feed_url)
+    tree.write(opml_path, encoding="utf-8", xml_declaration=True)
+    return True
+
+
+def _remove_feed_from_opml(source_opml: str, feed_name: str, feed_url: str) -> bool:
+    """Remove a feed outline from its source OPML file."""
+    opml_path = _get_opml_path(source_opml)
+    if not opml_path.exists():
+        return False
+
+    try:
+        tree = ET.parse(opml_path)
+        root = tree.getroot()
+    except Exception:
+        return False
+
+    removed = False
+    for parent in root.iter():
+        for child in list(parent):
+            if child.tag != "outline":
+                continue
+            child_url = _to_str(child.get("xmlUrl", ""))
+            child_name = _to_str(child.get("text", ""))
+            if child_url == feed_url and (child_name == feed_name or not feed_name):
+                parent.remove(child)
+                removed = True
+                break
+        if removed:
+            break
+
+    if removed:
+        tree.write(opml_path, encoding="utf-8", xml_declaration=True)
+    return removed
+
+
+def _update_feed_category_in_opml(
+    source_opml: str,
+    feed_name: str,
+    feed_url: str,
+    new_category: str,
+) -> bool:
+    """Update a feed category in its source OPML file."""
+    opml_path = _get_opml_path(source_opml)
+    if not opml_path.exists():
+        return False
+
+    try:
+        tree = ET.parse(opml_path)
+        root = tree.getroot()
+    except Exception:
+        return False
+
+    updated = False
+    fallback: ET.Element | None = None
+    for outline in root.iter("outline"):
+        xml_url = _to_str(outline.get("xmlUrl", ""))
+        if xml_url != feed_url:
+            continue
+        if fallback is None:
+            fallback = outline
+        if _to_str(outline.get("text", "")) == feed_name:
+            outline.set("category", new_category)
+            updated = True
+            break
+
+    if not updated and fallback is not None:
+        fallback.set("category", new_category)
+        updated = True
+
+    if updated:
+        tree.write(opml_path, encoding="utf-8", xml_declaration=True)
+    return updated
+
+
+def _collect_known_categories() -> list[str]:
+    """Collect existing categories from feed*.opml files."""
+    categories: set[str] = set()
+    for opml_path in sorted(glob.glob(str(DATA_DIR / "feed*.opml"))):
+        try:
+            tree = ET.parse(opml_path)
+        except Exception:
+            continue
+        for outline in tree.getroot().iter("outline"):
+            cat = _to_str(outline.get("category", "")).strip()
+            if cat and cat.lower() != "uncategorized":
+                categories.add(cat)
+    return sorted(categories)
+
+
+def _infer_category_for_feed(
+    feed_name: str,
+    feed_url: str,
+    feed_title: str,
+    feed_description: str,
+    known_categories: list[str],
+) -> str:
+    """Infer a best-fit category for a feed when category is missing."""
+    haystack = " ".join(
+        [
+            _to_str(feed_name).lower(),
+            _to_str(feed_url).lower(),
+            _to_str(feed_title).lower(),
+            _to_str(feed_description).lower(),
+        ]
+    )
+
+    keyword_priority: list[tuple[str, list[str]]] = [
+        ("Security", ["security", "infosec", "cyber", "owasp", "malware"]),
+        ("Podcasts", ["podcast", "episode", "audio", "libsyn", "megaphone"]),
+        ("Science", ["science", "research", "journal", "nature", "space"]),
+        ("News", ["news", "breaking", "headlines", "world"]),
+        ("Programming", ["python", "developer", "coding", "programming", "software"]),
+        ("Tech", ["tech", "technology", "ai", "cloud", "startup", "openai"]),
+        ("Weather", ["weather", "forecast", "solar storm"]),
+        ("Entertainment", ["entertainment", "movie", "film", "music", "drama"]),
+        ("Comedy", ["comedy", "humor", "satire"]),
+        ("Intelligence", ["intel", "intelligence", "geopolitics", "espionage"]),
+        ("Gaming", ["gaming", "game", "esports"]),
+    ]
+
+    known_lookup = {c.lower(): c for c in known_categories}
+    for target, keywords in keyword_priority:
+        if target.lower() not in known_lookup:
+            continue
+        if any(keyword in haystack for keyword in keywords):
+            return known_lookup[target.lower()]
+
+    if "Tech" in known_categories:
+        return "Tech"
+    if known_categories:
+        return known_categories[0]
+    return "Uncategorized"
+
+
+def _append_retired_feed_to_archive(
+    feed_name: str,
+    feed_url: str,
+    category: str,
+    source_opml: str,
+    reason: str,
+) -> bool:
+    """Append a retired feed to data/archive/retired-feeds.opml.
+
+    Skips insertion if a matching xmlUrl already exists.
+    """
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+    if RETIRED_FEEDS_OPML.exists():
+        try:
+            tree = ET.parse(RETIRED_FEEDS_OPML)
+            root = tree.getroot()
+        except Exception:
+            return False
+    else:
+        root = ET.Element("opml", {"version": "2.0"})
+        head = ET.SubElement(root, "head")
+        ET.SubElement(head, "title").text = "Retired Feed Subscriptions"
+        ET.SubElement(root, "body")
+        tree = ET.ElementTree(root)
+
+    body = root.find("body")
+    if body is None:
+        body = ET.SubElement(root, "body")
+
+    for outline in root.iter("outline"):
+        if _to_str(outline.get("xmlUrl", "")) == feed_url:
+            return True
+
+    retired_at = datetime.now(timezone.utc).isoformat()
+    ET.SubElement(
+        body,
+        "outline",
+        {
+            "type": "rss",
+            "text": feed_name,
+            "xmlUrl": feed_url,
+            "category": category or "Uncategorized",
+            "sourceOpml": source_opml,
+            "retiredReason": reason,
+            "retiredAt": retired_at,
+        },
+    )
+    tree.write(RETIRED_FEEDS_OPML, encoding="utf-8", xml_declaration=True)
+    return True
+
+
+def _probe_feed_url(feed_url: str) -> tuple[int | None, str]:
+    """Probe a feed URL without following redirects.
+
+    Returns (status_code, redirect_location). redirect_location is an absolute
+    URL when present.
+    """
+    try:
+        resp = requests.get(
+            feed_url,
+            headers=HTTP_HEADERS,
+            timeout=HTTP_TIMEOUT,
+            allow_redirects=False,
+        )
+    except Exception:
+        return None, ""
+
+    location = _to_str(resp.headers.get("Location", ""))
+    absolute_location = urljoin(feed_url, location) if location else ""
+    return resp.status_code, absolute_location
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  MCP Tool Definitions
 #  ─ Each tool has:
@@ -484,17 +738,59 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=CUTOFF_DAYS)
     feed_slug = slugify(feed_name)
     now_iso = datetime.now(timezone.utc).isoformat()
+    effective_feed_url = feed_url
+    opml_updated = False
+    category_assigned = False
+    category_updated_in_opml = False
+
+    status_code, redirect_url = _probe_feed_url(feed_url)
+
+    if status_code in PERMANENT_REDIRECT_CODES and redirect_url:
+        effective_feed_url = redirect_url
+        opml_updated = _update_feed_url_in_opml(
+            source_opml=source_opml,
+            feed_name=feed_name,
+            old_feed_url=feed_url,
+            new_feed_url=redirect_url,
+        )
+
+    if status_code == 404:
+        archived = _append_retired_feed_to_archive(
+            feed_name=feed_name,
+            feed_url=feed_url,
+            category=category,
+            source_opml=source_opml,
+            reason="404 Not Found",
+        )
+        removed = _remove_feed_from_opml(
+            source_opml=source_opml,
+            feed_name=feed_name,
+            feed_url=feed_url,
+        )
+        return _text_result(
+            {
+                "feed_name": feed_name,
+                "feed_url": feed_url,
+                "status": "retired",
+                "reason": "404 Not Found",
+                "removed_from_opml": removed,
+                "archived_to": str(RETIRED_FEEDS_OPML),
+                "archived": archived,
+                "new_saved": 0,
+            }
+        )
 
     # ── Fetch feed ──────────────────────────────────────────────────────────
     try:
-        feed = feedparser.parse(feed_url)
+        feed = feedparser.parse(effective_feed_url)
         if feed.bozo and not feed.entries:
             return _text_result(
                 {
                     "feed_name": feed_name,
-                    "feed_url": feed_url,
+                    "feed_url": effective_feed_url,
                     "status": "error",
                     "error": f"Feed parse error: {feed.bozo_exception}",
+                    "feed_url_updated_in_opml": opml_updated,
                     "new_saved": 0,
                 }
             )
@@ -502,12 +798,46 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
         return _text_result(
             {
                 "feed_name": feed_name,
-                "feed_url": feed_url,
+                "feed_url": effective_feed_url,
                 "status": "error",
                 "error": str(exc),
+                "feed_url_updated_in_opml": opml_updated,
                 "new_saved": 0,
             }
         )
+
+    if (not category.strip()) or (category.lower() == "uncategorized"):
+        feed_meta = getattr(feed, "feed", None)
+        feed_title = ""
+        feed_description = ""
+        if isinstance(feed_meta, dict):
+            feed_title = _to_str(feed_meta.get("title", ""))
+            feed_description = _to_str(
+                feed_meta.get("subtitle", feed_meta.get("description", ""))
+            )
+        elif feed_meta is not None:
+            feed_title = _to_str(getattr(feed_meta, "title", ""))
+            feed_description = _to_str(
+                getattr(feed_meta, "subtitle", getattr(feed_meta, "description", ""))
+            )
+
+        known_categories = _collect_known_categories()
+        inferred_category = _infer_category_for_feed(
+            feed_name=feed_name,
+            feed_url=effective_feed_url,
+            feed_title=feed_title,
+            feed_description=feed_description,
+            known_categories=known_categories,
+        )
+        if inferred_category and inferred_category.lower() != "uncategorized":
+            category = inferred_category
+            category_assigned = True
+            category_updated_in_opml = _update_feed_category_in_opml(
+                source_opml=source_opml,
+                feed_name=feed_name,
+                feed_url=feed_url,
+                new_category=category,
+            )
 
     # ── Load existing GUIDs for dedup ───────────────────────────────────────
     existing_guids = _load_existing_guids(feed_slug)
@@ -535,7 +865,7 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
             continue
 
         # ── GUID & dedup ────────────────────────────────────────────────────
-        guid = compute_guid(entry, feed_url)
+        guid = compute_guid(entry, effective_feed_url)
         if guid in existing_guids:
             skipped_dupes += 1
             continue
@@ -582,7 +912,7 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
                 title=title,
                 canonical_url=link,
                 feed_name=feed_name,
-                feed_url=feed_url,
+                feed_url=effective_feed_url,
                 category=category,
                 author=author,
                 published_date=pub_iso,
@@ -613,7 +943,12 @@ async def process_single_feed(args: dict[str, Any]) -> dict[str, Any]:
     return _text_result(
         {
             "feed_name": feed_name,
-            "feed_url": feed_url,
+            "feed_url": effective_feed_url,
+            "feed_url_original": feed_url,
+            "feed_url_updated_in_opml": opml_updated,
+            "category": category,
+            "category_assigned": category_assigned,
+            "category_updated_in_opml": category_updated_in_opml,
             "status": "ok",
             "total_entries": len(feed.entries),
             "recent_entries": len(feed.entries) - skipped_old,
