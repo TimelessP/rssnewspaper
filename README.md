@@ -207,7 +207,7 @@ Environment variables are loaded from `.env` (see `example.env`):
 | `VLLM_MASTER_PORT_SCAN_LIMIT` | How many higher ports to probe if `VLLM_MASTER_PORT` is in use | `100` |
 | `VLLM_API_KEY` | API key expected by local vLLM server | `dummy` |
 | `VLLM_HF_TOKEN` | Optional Hugging Face token for private/gated models (`--hf-token`) | `` |
-| `VLLM_MAX_MODEL_LEN` | vLLM max context length (minimum enforced at 20000) | `20000` |
+| `VLLM_MAX_MODEL_LEN` | vLLM max context length (lower this if KV cache errors occur) | `2000` |
 | `VLLM_GPU_MEMORY_UTILIZATION` | Fraction of total VRAM vLLM may reserve (`0.1`–`1.0`) | `0.9` |
 | `VLLM_TOOL_CALL_PARSER` | vLLM tool-call parser for the selected model | `mistral` |
 | `VLLM_STARTUP_TIMEOUT` | Seconds to wait for vLLM health readiness (`0` = no timeout) | `1800` |

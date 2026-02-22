@@ -336,11 +336,21 @@ def _wait_for_vllm_ready(
                     "or use USE_VLLM=0 to run via another endpoint.\n\n"
                     f"{_collect_gpu_diagnostics()}"
                 )
+            kv_cache_hint = ""
+            if "estimated maximum model length is" in log_tail:
+                match = re.search(r"estimated maximum model length is\s+(\d+)", log_tail)
+                suggested_len = match.group(1) if match else "(unknown)"
+                kv_cache_hint = (
+                    "\n\nDetected KV-cache capacity limit for current settings. "
+                    "Lower VLLM_MAX_MODEL_LEN (for example to "
+                    f"{suggested_len}) or increase VLLM_GPU_MEMORY_UTILIZATION."
+                )
             raise RuntimeError(
                 "vLLM exited during startup.\n\n"
                 "Last vLLM log lines:\n"
                 f"{log_tail}"
                 f"{memory_hint}"
+                f"{kv_cache_hint}"
             )
 
         for path in probe_paths:
@@ -425,7 +435,9 @@ def configure_llm_runtime() -> tuple[subprocess.Popen[str] | None, str]:
         scan_limit=master_port_scan_limit,
         reserved_port=port,
     )
-    max_model_len = max(20000, int(os.environ.get("VLLM_MAX_MODEL_LEN", "20000")))
+    max_model_len = int(os.environ.get("VLLM_MAX_MODEL_LEN", "2000"))
+    if max_model_len <= 0:
+        raise RuntimeError("VLLM_MAX_MODEL_LEN must be a positive integer.")
     gpu_memory_utilization = float(
         os.environ.get("VLLM_GPU_MEMORY_UTILIZATION", "0.9")
     )
@@ -2251,11 +2263,7 @@ async def main() -> None:
                         print(f"\n{result_text}")
     finally:
         if vllm_process is not None and vllm_process.poll() is None:
-            vllm_process.terminate()
-            try:
-                vllm_process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                vllm_process.kill()
+            _stop_process_gracefully(vllm_process)
 
     print(f"\nTotal feeds dispatched: {feeds_processed}")
     print(f"Article files at: {ARTICLES_DIR}")
