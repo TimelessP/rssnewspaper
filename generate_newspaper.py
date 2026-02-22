@@ -320,6 +320,7 @@ def build_articles_json(articles: list[dict[str, Any]]) -> str:
             "title": article.get("title", ""),
             "canonical_url": article.get("canonical_url", ""),
             "feed_name": article.get("feed_name", ""),
+            "feed_url": article.get("feed_url", ""),
             "category": article.get("category", ""),
             "author": article.get("author", ""),
             "published_display": article.get("published_display", ""),
