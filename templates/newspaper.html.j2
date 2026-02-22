@@ -1,0 +1,1803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Daily Wire &mdash; {{ generation_date_display }}</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   THE DAILY WIRE — Old-Time Newspaper · Art-Game Aesthetic
+   Desaturated palette · Vector icons · Self-contained
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── CSS Reset & Base ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Desaturated old-paper palette */
+  --paper:        #f2ebe0;
+  --paper-dark:   #e8dece;
+  --paper-edge:   #d4c5ad;
+  --ink:          #2c2416;
+  --ink-light:    #5a4e3c;
+  --ink-faded:    #8a7e6c;
+  --ink-ghost:    #b0a690;
+  --accent:       #8b3a3a;
+  --accent-hover: #a04545;
+  --accent-pale:  #c49a7a;
+  --rule:         #a09480;
+  --rule-heavy:   #6e6354;
+  --shadow:       rgba(44, 36, 22, 0.12);
+  --shadow-deep:  rgba(44, 36, 22, 0.25);
+
+  /* Typography scale */
+  --font-serif:    'Georgia', 'Times New Roman', 'Palatino', serif;
+  --font-display:  'Georgia', 'Palatino Linotype', serif;
+  --font-mono:     'Courier New', 'Courier', monospace;
+
+  /* Layout */
+  --max-width: 1400px;
+  --gutter: 1.5rem;
+  --card-radius: 2px;
+
+  /* Texture overlay opacity */
+  --texture-opacity: 0.04;
+}
+
+html {
+  font-size: 32px;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: var(--font-serif);
+  background: var(--paper);
+  color: var(--ink);
+  line-height: 1.65;
+  min-height: 100vh;
+  position: relative;
+}
+
+/* Paper texture overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: var(--texture-opacity);
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(44, 36, 22, 0.03) 2px,
+      rgba(44, 36, 22, 0.03) 4px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 3px,
+      rgba(44, 36, 22, 0.02) 3px,
+      rgba(44, 36, 22, 0.02) 6px
+    );
+}
+
+a { color: var(--accent); text-decoration: none; transition: color 0.2s; }
+a:hover { color: var(--accent-hover); text-decoration: underline; }
+
+img { max-width: 100%; height: auto; display: block; }
+
+::selection { background: var(--accent-pale); color: var(--ink); }
+
+/* ── SVG Icon Definitions (hidden) ────────────────────────────────────── */
+.svg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+.icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+  fill: currentColor;
+  stroke: none;
+}
+.icon-lg { width: 1.5em; height: 1.5em; }
+.icon-xl { width: 2em; height: 2em; }
+
+
+/* ── Masthead ─────────────────────────────────────────────────────────── */
+.masthead {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 2rem var(--gutter) 0;
+  text-align: center;
+  position: relative;
+}
+
+.masthead__rule-top {
+  border: none;
+  border-top: 3px double var(--rule-heavy);
+  margin-bottom: 0.75rem;
+}
+
+.masthead__dateline {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--ink-faded);
+  margin-bottom: 0.25rem;
+}
+
+.masthead__title {
+  font-family: var(--font-display);
+  font-size: clamp(2.5rem, 6vw, 5rem);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.05;
+  color: var(--ink);
+  text-transform: uppercase;
+  margin: 0.25rem 0;
+  text-shadow: 1px 1px 0 var(--paper-dark);
+}
+
+.masthead__subtitle {
+  font-style: italic;
+  font-size: 1rem;
+  color: var(--ink-faded);
+  margin-bottom: 0.25rem;
+}
+
+.masthead__stats {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  color: var(--ink-ghost);
+  margin-bottom: 0.75rem;
+}
+
+.masthead__rule-bottom {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin-bottom: 0;
+}
+
+/* Decorative corner flourishes */
+.masthead__flourish {
+  position: absolute;
+  width: 60px;
+  height: 60px;
+  opacity: 0.2;
+}
+.masthead__flourish--tl { top: 0.5rem; left: var(--gutter); }
+.masthead__flourish--tr { top: 0.5rem; right: var(--gutter); transform: scaleX(-1); }
+
+
+/* ── Navigation / Toolbar ─────────────────────────────────────────────── */
+.toolbar {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0.75rem var(--gutter);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--rule);
+  position: sticky;
+  top: 0;
+  background: var(--paper);
+  z-index: 100;
+  backdrop-filter: blur(2px);
+}
+
+.toolbar__search {
+  flex: 1 1 260px;
+  position: relative;
+}
+
+.toolbar__search-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem 0.5rem 2.25rem;
+  font-family: var(--font-serif);
+  font-size: 0.9rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--card-radius);
+  background: var(--paper);
+  color: var(--ink);
+  transition: border-color 0.2s, box-shadow 0.2s;
+  outline: none;
+}
+.toolbar__search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(139, 58, 58, 0.15);
+}
+.toolbar__search-input::placeholder { color: var(--ink-ghost); font-style: italic; }
+
+.toolbar__search-icon {
+  position: absolute;
+  left: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ink-ghost);
+  pointer-events: none;
+}
+
+.toolbar__search-clear {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--ink-ghost);
+  cursor: pointer;
+  padding: 0.25rem;
+  display: none;
+  font-size: 1rem;
+  line-height: 1;
+}
+.toolbar__search-clear.visible { display: block; }
+.toolbar__search-clear:hover { color: var(--accent); }
+
+.toolbar__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.toolbar__filter-btn {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--card-radius);
+  background: transparent;
+  color: var(--ink-faded);
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.toolbar__filter-btn:hover {
+  border-color: var(--ink-light);
+  color: var(--ink-light);
+}
+.toolbar__filter-btn.active {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+
+/* Content-type filter accent colours */
+.toolbar__filter-btn[data-kind="podcast"].active,
+.toolbar__filter-btn[data-media="audio"].active {
+  background: #6b5b3e;
+  border-color: #6b5b3e;
+}
+.toolbar__filter-btn[data-kind="video"].active,
+.toolbar__filter-btn[data-media="video"].active,
+.toolbar__filter-btn[data-media="youtube"].active {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Collapsible Filter Panel ─────────────────────────────────────────── */
+.filter-panel {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.25s ease, padding 0.3s ease;
+  max-height: 60rem;          /* generous open height */
+  opacity: 1;
+  padding: 0.4rem var(--gutter) 0.5rem;
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.filter-panel.collapsed {
+  max-height: 0;
+  opacity: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-bottom-color: transparent;
+}
+
+.toolbar__toggle {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--card-radius);
+  background: transparent;
+  color: var(--ink-faded);
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.toolbar__toggle:hover { border-color: var(--ink-light); color: var(--ink-light); }
+.toolbar__toggle .chevron {
+  display: inline-block;
+  transition: transform 0.3s;
+  font-size: 0.7em;
+}
+.toolbar__toggle.open .chevron { transform: rotate(180deg); }
+
+.toolbar__active-filters {
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  color: var(--accent);
+  letter-spacing: 0.06em;
+}
+
+/* ── Filter Rows ──────────────────────────────────────────────────────── */
+.toolbar__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  width: 100%;
+}
+
+.toolbar__row-label {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-ghost);
+  min-width: 5rem;
+  flex-shrink: 0;
+}
+
+.toolbar__separator {
+  width: 1px;
+  height: 1.2rem;
+  background: var(--rule);
+  flex-shrink: 0;
+}
+
+/* ── Tag Cloud (inside filter panel) ──────────────────────────────────── */
+.tag-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.tag-cloud__label {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-ghost);
+  margin-right: 0.5rem;
+  flex-shrink: 0;
+}
+
+.tag-cloud__tag {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  color: var(--ink-faded);
+  border: 1px solid var(--paper-edge);
+  padding: 0.15rem 0.45rem;
+  border-radius: 1px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  background: transparent;
+}
+.tag-cloud__tag:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tag-cloud__tag.active {
+  background: var(--accent);
+  color: var(--paper);
+  border-color: var(--accent);
+}
+.tag-cloud__tag .tag-count {
+  font-size: 0.55rem;
+  opacity: 0.6;
+  margin-left: 0.2rem;
+}
+
+.tag-cloud__toggle {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.15rem 0.4rem;
+  text-decoration: underline;
+}
+
+/* ── Media Badges on Cards ────────────────────────────────────────────── */
+.card__media-badge {
+  position: absolute;
+  bottom: 0.5rem;
+  left: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.4rem;
+  border-radius: 1px;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+.card__media-badge--audio {
+  background: #6b5b3e;
+  color: var(--paper);
+}
+.card__media-badge--youtube {
+  background: #8b3a3a;
+  color: var(--paper);
+}
+.card__media-badge--video {
+  background: #5a4e3c;
+  color: var(--paper);
+}
+/* Stack multiple badges */
+.card__media-badge + .card__media-badge {
+  left: auto;
+  right: 0.5rem;
+}
+
+.toolbar__view-btns {
+  display: flex;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+
+.toolbar__view-btn {
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: var(--card-radius);
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+  color: var(--ink-faded);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+}
+.toolbar__view-btn:hover { border-color: var(--ink-light); color: var(--ink-light); }
+.toolbar__view-btn.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+.toolbar__count {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--ink-ghost);
+  white-space: nowrap;
+}
+
+
+/* ── Category Section Headers ─────────────────────────────────────────── */
+.section-header {
+  max-width: var(--max-width);
+  margin: 2rem auto 1rem;
+  padding: 0 var(--gutter);
+}
+
+.section-header__inner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.section-header__icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.section-header__title {
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink);
+}
+
+.section-header__rule {
+  flex: 1;
+  border: none;
+  border-top: 2px solid var(--rule-heavy);
+}
+
+.section-header__count {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--ink-ghost);
+  white-space: nowrap;
+}
+
+
+/* ── Card Grid ────────────────────────────────────────────────────────── */
+.card-grid {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.5rem;
+}
+
+.card-grid--headlines {
+  grid-template-columns: 1fr;
+}
+
+
+/* ── Article Card ─────────────────────────────────────────────────────── */
+.card {
+  background: var(--paper);
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--card-radius);
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  cursor: default;
+}
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px var(--shadow), 0 1px 4px var(--shadow-deep);
+}
+
+.card__image-wrap {
+  position: relative;
+  overflow: hidden;
+  background: var(--paper-dark);
+  aspect-ratio: 16 / 9;
+}
+.card__image-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(0.55) contrast(1.05) sepia(0.15);
+  transition: filter 0.3s;
+}
+.card:hover .card__image-wrap img {
+  filter: saturate(0.75) contrast(1.05) sepia(0.08);
+}
+.card__image-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-ghost);
+}
+
+.card__kind-badge {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: var(--ink);
+  color: var(--paper);
+  padding: 0.2rem 0.5rem;
+  border-radius: 1px;
+}
+
+.card__body {
+  padding: 1rem 1.2rem;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.card__feed {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 0.4rem;
+}
+
+.card__title {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.3;
+  margin-bottom: 0.5rem;
+  color: var(--ink);
+}
+.card__title a {
+  color: inherit;
+  text-decoration: none;
+}
+.card__title a:hover {
+  color: var(--accent);
+}
+
+.card__meta {
+  font-size: 0.78rem;
+  color: var(--ink-faded);
+  margin-bottom: 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.card__meta-item {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.card__summary {
+  font-size: 0.88rem;
+  color: var(--ink-light);
+  line-height: 1.55;
+  flex: 1;
+  /* Clamp to ~4 lines */
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--paper-edge);
+}
+
+.card__tag {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.05em;
+  color: var(--ink-ghost);
+  border: 1px solid var(--paper-edge);
+  padding: 0.15rem 0.4rem;
+  border-radius: 1px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.card__tag:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.card__footer {
+  padding: 0.6rem 1.2rem;
+  border-top: 1px solid var(--paper-edge);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card__read-link {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.card__read-link:hover { text-decoration: none; color: var(--accent-hover); }
+
+.card__read-link .icon { transition: transform 0.2s; }
+.card__read-link:hover .icon { transform: translateX(3px); }
+
+
+/* ── Headlines View (list mode) ──────────────────────────────────────── */
+.card--headline {
+  flex-direction: row;
+  gap: 0;
+}
+.card--headline .card__image-wrap {
+  width: 200px;
+  min-width: 200px;
+  aspect-ratio: auto;
+}
+.card--headline .card__body {
+  padding: 0.8rem 1rem;
+}
+.card--headline .card__title { font-size: 1rem; }
+.card--headline .card__summary { -webkit-line-clamp: 2; }
+.card--headline .card__tags { display: none; }
+.card--headline .card__footer { display: none; }
+
+
+/* ── Article Modal / Expanded View ────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(44, 36, 22, 0.65);
+  z-index: 1000;
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 3rem 1rem;
+  backdrop-filter: blur(3px);
+}
+.modal-overlay.open { display: flex; }
+
+.modal {
+  background: var(--paper);
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--card-radius);
+  max-width: 800px;
+  width: 100%;
+  position: relative;
+  box-shadow: 0 16px 64px var(--shadow-deep);
+  animation: modalIn 0.25s ease-out;
+}
+
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.modal__close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: var(--paper-dark);
+  border: 1px solid var(--rule);
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 50%;
+  color: var(--ink-faded);
+  transition: all 0.2s;
+  z-index: 10;
+}
+.modal__close:hover { background: var(--ink); color: var(--paper); }
+
+.modal__hero {
+  width: 100%;
+  aspect-ratio: 2 / 1;
+  overflow: hidden;
+  background: var(--paper-dark);
+}
+.modal__hero img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(0.6) contrast(1.05) sepia(0.12);
+}
+
+.modal__content {
+  padding: 2rem 2.5rem;
+}
+
+.modal__feed {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 0.5rem;
+}
+
+.modal__title {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 0.75rem;
+  color: var(--ink);
+}
+
+.modal__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.82rem;
+  color: var(--ink-faded);
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--rule);
+}
+.modal__meta-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.modal__body {
+  font-size: 0.95rem;
+  line-height: 1.75;
+  color: var(--ink-light);
+}
+.modal__body p { margin-bottom: 1rem; }
+.modal__body a { color: var(--accent); text-decoration: underline; }
+.modal__body img {
+  margin: 1rem 0;
+  border: 1px solid var(--paper-edge);
+  filter: saturate(0.6) sepia(0.1);
+}
+
+.modal__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
+
+.modal__actions {
+  margin-top: 1.5rem;
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.modal__action-btn {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.5rem 1.2rem;
+  border: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink-faded);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  text-decoration: none;
+}
+.modal__action-btn:hover {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+  text-decoration: none;
+}
+
+.modal__action-btn--primary {
+  background: var(--accent);
+  color: var(--paper);
+  border-color: var(--accent);
+}
+.modal__action-btn--primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* ── No Results ───────────────────────────────────────────────────────── */
+.no-results {
+  max-width: var(--max-width);
+  margin: 4rem auto;
+  text-align: center;
+  color: var(--ink-ghost);
+  display: none;
+}
+.no-results.visible { display: block; }
+.no-results__icon { font-size: 3rem; margin-bottom: 1rem; color: var(--rule); }
+.no-results__text { font-style: italic; font-size: 1.1rem; }
+
+/* ── Footer ───────────────────────────────────────────────────────────── */
+.page-footer {
+  max-width: var(--max-width);
+  margin: 3rem auto 0;
+  padding: 1.5rem var(--gutter);
+  border-top: 3px double var(--rule-heavy);
+  text-align: center;
+}
+.page-footer__text {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  color: var(--ink-ghost);
+}
+
+/* ── Back-to-top ──────────────────────────────────────────────────────── */
+.back-to-top {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  background: var(--ink);
+  color: var(--paper);
+  border: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.3s, transform 0.3s;
+  z-index: 50;
+  box-shadow: 0 2px 8px var(--shadow-deep);
+}
+.back-to-top.visible { opacity: 1; transform: translateY(0); }
+.back-to-top:hover { background: var(--accent); }
+
+/* ── Responsive ───────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .card-grid { grid-template-columns: 1fr; }
+  .card--headline { flex-direction: column; }
+  .card--headline .card__image-wrap { width: 100%; aspect-ratio: 16 / 9; min-width: auto; }
+  .modal__content { padding: 1.5rem 1.25rem; }
+  .modal__title { font-size: 1.5rem; }
+  .masthead__flourish { display: none; }
+  .toolbar { gap: 0.5rem; }
+}
+
+@media (max-width: 480px) {
+  .toolbar__view-btns { display: none; }
+  .masthead__title { font-size: 2rem; }
+}
+
+/* ── Print ────────────────────────────────────────────────────────────── */
+@media print {
+  .toolbar, .back-to-top, .modal-overlay { display: none !important; }
+  .card { break-inside: avoid; box-shadow: none; }
+  body::before { display: none; }
+}
+
+/* ── Decorative column rule between cards (in grid mode) ──────────────── */
+.card-grid:not(.card-grid--headlines) .card {
+  border-left: 1px solid var(--paper-edge);
+  padding-left: 0;
+}
+.card-grid:not(.card-grid--headlines) .card:first-child,
+.card-grid:not(.card-grid--headlines) .card:nth-child(4n+1) {
+  border-left: none;
+}
+
+/* ── Skeleton loading feel (applied briefly) ──────────────────────────── */
+@keyframes shimmer {
+  0% { background-position: -200px 0; }
+  100% { background-position: calc(200px + 100%) 0; }
+}
+
+/* ── Highlight search matches ─────────────────────────────────────────── */
+mark {
+  background: rgba(139, 58, 58, 0.2);
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 1px;
+}
+
+/* ── Hidden utility ───────────────────────────────────────────────────── */
+.hidden { display: none !important; }
+
+/* ── Scrollbar styling ────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: var(--paper-dark); }
+::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-faded); }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SVG Symbol Definitions — flat, desaturated icon set
+     ═══════════════════════════════════════════════════════════════════════ -->
+<svg class="svg-defs" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Search magnifying glass -->
+    <symbol id="icon-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"/>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </symbol>
+
+    <!-- Close X -->
+    <symbol id="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18"/>
+      <line x1="6" y1="6" x2="18" y2="18"/>
+    </symbol>
+
+    <!-- Arrow right -->
+    <symbol id="icon-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="5" y1="12" x2="19" y2="12"/>
+      <polyline points="12 5 19 12 12 19"/>
+    </symbol>
+
+    <!-- Arrow up -->
+    <symbol id="icon-arrow-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" y1="19" x2="12" y2="5"/>
+      <polyline points="5 12 12 5 19 12"/>
+    </symbol>
+
+    <!-- Grid view -->
+    <symbol id="icon-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="7" height="7"/>
+      <rect x="14" y="3" width="7" height="7"/>
+      <rect x="14" y="14" width="7" height="7"/>
+      <rect x="3" y="14" width="7" height="7"/>
+    </symbol>
+
+    <!-- List/headline view -->
+    <symbol id="icon-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="8" y1="6" x2="21" y2="6"/>
+      <line x1="8" y1="12" x2="21" y2="12"/>
+      <line x1="8" y1="18" x2="21" y2="18"/>
+      <line x1="3" y1="6" x2="3.01" y2="6"/>
+      <line x1="3" y1="12" x2="3.01" y2="12"/>
+      <line x1="3" y1="18" x2="3.01" y2="18"/>
+    </symbol>
+
+    <!-- Calendar -->
+    <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+      <line x1="16" y1="2" x2="16" y2="6"/>
+      <line x1="8" y1="2" x2="8" y2="6"/>
+      <line x1="3" y1="10" x2="21" y2="10"/>
+    </symbol>
+
+    <!-- User/author -->
+    <symbol id="icon-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+      <circle cx="12" cy="7" r="4"/>
+    </symbol>
+
+    <!-- External link -->
+    <symbol id="icon-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+      <polyline points="15 3 21 3 21 9"/>
+      <line x1="10" y1="14" x2="21" y2="3"/>
+    </symbol>
+
+    <!-- Tag -->
+    <symbol id="icon-tag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+      <line x1="7" y1="7" x2="7.01" y2="7"/>
+    </symbol>
+
+    <!-- RSS feed -->
+    <symbol id="icon-rss" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 11a9 9 0 0 1 9 9"/>
+      <path d="M4 4a16 16 0 0 1 16 16"/>
+      <circle cx="5" cy="19" r="1"/>
+    </symbol>
+
+    <!-- Newspaper -->
+    <symbol id="icon-newspaper" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/>
+      <path d="M18 14h-8"/>
+      <path d="M15 18h-5"/>
+      <path d="M10 6h8v4h-8V6Z"/>
+    </symbol>
+
+    <!-- Article/document -->
+    <symbol id="icon-article" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/>
+      <line x1="16" y1="13" x2="8" y2="13"/>
+      <line x1="16" y1="17" x2="8" y2="17"/>
+      <polyline points="10 9 9 9 8 9"/>
+    </symbol>
+
+    <!-- Podcast/microphone -->
+    <symbol id="icon-podcast" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+      <line x1="12" y1="19" x2="12" y2="23"/>
+      <line x1="8" y1="23" x2="16" y2="23"/>
+    </symbol>
+
+    <!-- Video/play -->
+    <symbol id="icon-video" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="5 3 19 12 5 21 5 3"/>
+    </symbol>
+
+    <!-- Image placeholder -->
+    <symbol id="icon-image" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+      <circle cx="8.5" cy="8.5" r="1.5"/>
+      <polyline points="21 15 16 10 5 21"/>
+    </symbol>
+
+    <!-- Globe/language -->
+    <symbol id="icon-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <line x1="2" y1="12" x2="22" y2="12"/>
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+    </symbol>
+
+    <!-- Shield / Security -->
+    <symbol id="icon-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+    </symbol>
+
+    <!-- Science / beaker -->
+    <symbol id="icon-beaker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 3h6v5.586a1 1 0 0 1 .293.707l3.414 7.028A2 2 0 0 1 16.92 19H7.08a2 2 0 0 1-1.787-2.679l3.414-7.028A1 1 0 0 1 9 8.586V3z"/>
+      <line x1="8" y1="3" x2="16" y2="3"/>
+    </symbol>
+
+    <!-- Star / space -->
+    <symbol id="icon-star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+    </symbol>
+
+    <!-- Comedy / smile -->
+    <symbol id="icon-smile" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
+      <line x1="9" y1="9" x2="9.01" y2="9"/>
+      <line x1="15" y1="9" x2="15.01" y2="9"/>
+    </symbol>
+
+    <!-- Decorative corner flourish -->
+    <symbol id="icon-flourish" viewBox="0 0 60 60">
+      <path d="M5 55 C5 30, 15 15, 55 5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <path d="M5 55 C5 40, 10 25, 40 10" fill="none" stroke="currentColor" stroke-width="1"/>
+      <path d="M5 55 C5 45, 8 35, 25 20" fill="none" stroke="currentColor" stroke-width="0.75"/>
+      <circle cx="55" cy="5" r="2" fill="currentColor"/>
+      <circle cx="40" cy="10" r="1.5" fill="currentColor"/>
+      <circle cx="25" cy="20" r="1" fill="currentColor"/>
+    </symbol>
+
+    <!-- Empty state / No results -->
+    <symbol id="icon-empty" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <path d="M8 15s1.5-2 4-2 4 2 4 2"/>
+      <line x1="9" y1="9" x2="9.01" y2="9"/>
+      <line x1="15" y1="9" x2="15.01" y2="9"/>
+    </symbol>
+  </defs>
+</svg>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Masthead
+     ═══════════════════════════════════════════════════════════════════════ -->
+<header class="masthead">
+  <svg class="masthead__flourish masthead__flourish--tl"><use href="#icon-flourish"/></svg>
+  <svg class="masthead__flourish masthead__flourish--tr"><use href="#icon-flourish"/></svg>
+
+  <hr class="masthead__rule-top">
+  <p class="masthead__dateline">{{ generation_date_display }} &bull; Automated RSS Intelligence</p>
+  <h1 class="masthead__title">The Daily Wire</h1>
+  <p class="masthead__subtitle">&ldquo;All the feeds that&rsquo;s fit to render&rdquo;</p>
+  <p class="masthead__stats">
+    {{ total_articles }} {{ "Article" if total_articles == 1 else "Articles" }}
+    &middot; {{ total_feeds }} {{ "Feed" if total_feeds == 1 else "Feeds" }}
+    &middot; {{ total_categories }} {{ "Category" if total_categories == 1 else "Categories" }}
+  </p>
+  <hr class="masthead__rule-bottom">
+</header>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Toolbar — Search, Filters, View Toggle
+     ═══════════════════════════════════════════════════════════════════════ -->
+<nav class="toolbar" id="toolbar">
+  <!-- Always-visible bar: Search + Toggle + View + Count -->
+  <div class="toolbar__row">
+    <div class="toolbar__search">
+      <svg class="icon toolbar__search-icon"><use href="#icon-search"/></svg>
+      <input
+        type="text"
+        class="toolbar__search-input"
+        id="searchInput"
+        placeholder="Search articles, authors, feeds&hellip;"
+        autocomplete="off"
+      >
+      <button class="toolbar__search-clear" id="searchClear" title="Clear search">
+        <svg class="icon"><use href="#icon-close"/></svg>
+      </button>
+    </div>
+
+    <button class="toolbar__toggle open" id="filterToggle" title="Show/hide filters">
+      <svg class="icon" style="width:0.75em;height:0.75em"><use href="#icon-search"/></svg>
+      Filters
+      <span class="chevron">&#9662;</span>
+    </button>
+    <span class="toolbar__active-filters" id="activeFilterHint"></span>
+
+    <div class="toolbar__view-btns">
+      <button class="toolbar__view-btn active" data-view="grid" title="Grid view">
+        <svg class="icon"><use href="#icon-grid"/></svg>
+      </button>
+      <button class="toolbar__view-btn" data-view="headlines" title="Headlines view">
+        <svg class="icon"><use href="#icon-list"/></svg>
+      </button>
+    </div>
+
+    <span class="toolbar__count" id="articleCount">{{ total_articles }} articles</span>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Collapsible Filter Panel
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="filter-panel" id="filterPanel">
+  <!-- Category filters -->
+  <div class="toolbar__row">
+    <span class="toolbar__row-label">
+      <svg class="icon" style="width:0.8em;height:0.8em"><use href="#icon-newspaper"/></svg>
+      Section
+    </span>
+    <button class="toolbar__filter-btn active" data-category="all">All</button>
+    {% for cat in categories %}
+    <button class="toolbar__filter-btn" data-category="{{ cat }}">
+      <svg class="icon" style="width:0.75em;height:0.75em"><use href="#icon-{{ category_icons.get(cat, 'article') }}"/></svg>
+      {{ cat }}
+    </button>
+    {% endfor %}
+  </div>
+
+  <!-- Content type + Media filters -->
+  <div class="toolbar__row">
+    <span class="toolbar__row-label">
+      <svg class="icon" style="width:0.8em;height:0.8em"><use href="#icon-tag"/></svg>
+      Type
+    </span>
+    <button class="toolbar__filter-btn" data-kind="all">All Types</button>
+    <button class="toolbar__filter-btn" data-kind="article">
+      <svg class="icon" style="width:0.75em;height:0.75em"><use href="#icon-article"/></svg>
+      Articles ({{ content_counts.article }})
+    </button>
+    <button class="toolbar__filter-btn" data-kind="podcast">
+      <svg class="icon" style="width:0.75em;height:0.75em"><use href="#icon-podcast"/></svg>
+      Podcasts ({{ content_counts.podcast }})
+    </button>
+    <button class="toolbar__filter-btn" data-kind="video">
+      <svg class="icon" style="width:0.75em;height:0.75em"><use href="#icon-video"/></svg>
+      Video ({{ content_counts.video }})
+    </button>
+    {% if content_counts.has_audio > 0 or content_counts.has_youtube > 0 %}
+    <span class="toolbar__separator"></span>
+    <span class="toolbar__row-label">Media</span>
+    {% endif %}
+    {% if content_counts.has_audio > 0 %}
+    <button class="toolbar__filter-btn" data-media="audio">
+      <svg class="icon" style="width:0.75em;height:0.75em"><use href="#icon-podcast"/></svg>
+      Has MP3 ({{ content_counts.has_audio }})
+    </button>
+    {% endif %}
+    {% if content_counts.has_youtube > 0 %}
+    <button class="toolbar__filter-btn" data-media="youtube">
+      <svg class="icon" style="width:0.75em;height:0.75em"><use href="#icon-video"/></svg>
+      Has YouTube ({{ content_counts.has_youtube }})
+    </button>
+    {% endif %}
+  </div>
+
+  <!-- Tag Cloud -->
+  {% if top_tags %}
+  <div class="tag-cloud" id="tagCloud">
+    <span class="tag-cloud__label">
+      <svg class="icon" style="width:0.8em;height:0.8em"><use href="#icon-tag"/></svg>
+      Tags
+    </span>
+    {% for tag in top_tags %}
+    <button class="tag-cloud__tag" data-tag="{{ tag.name | lower }}">{{ tag.name }}<span class="tag-count">&times;{{ tag.count }}</span></button>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     No Results State
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="no-results" id="noResults">
+  <div class="no-results__icon">
+    <svg class="icon icon-xl"><use href="#icon-empty"/></svg>
+  </div>
+  <p class="no-results__text">No articles match your filters.</p>
+  <button class="toolbar__filter-btn" onclick="resetFilters()" style="margin-top:0.5rem">Reset all filters</button>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Article Sections (grouped by category)
+     ═══════════════════════════════════════════════════════════════════════ -->
+{% for cat, articles in categories_articles.items() %}
+<section class="category-section" data-category="{{ cat }}">
+  <div class="section-header">
+    <div class="section-header__inner">
+      <svg class="icon icon-lg section-header__icon"><use href="#icon-{{ category_icons.get(cat, 'article') }}"/></svg>
+      <h2 class="section-header__title">{{ cat }}</h2>
+      <hr class="section-header__rule">
+      <span class="section-header__count">{{ articles | length }} {{ "article" if articles | length == 1 else "articles" }}</span>
+    </div>
+  </div>
+
+  <div class="card-grid" data-category="{{ cat }}">
+    {% for article in articles %}
+    <article class="card"
+             data-idx="{{ article._idx }}"
+             data-category="{{ article.category }}"
+             data-feed="{{ article.feed_name }}"
+             data-kind="{{ article.content_kind }}"
+             data-media="{{ article._media_flags }}"
+             data-tags="{{ article.tags | join(',') | lower }}"
+             data-searchable="{{ article.title | lower }} {{ article.feed_name | lower }} {{ article.author | lower }} {{ article.summary_plain | lower }} {{ article.tags | join(' ') | lower }}">
+
+      <div class="card__image-wrap" onclick="openArticle({{ article._idx }})">
+        {% if article.image_url %}
+        <img src="{{ article.image_url }}" alt="" loading="lazy"
+             onerror="this.parentElement.innerHTML='<div class=\'card__image-placeholder\'><svg class=\'icon icon-xl\'><use href=\'#icon-image\'/></svg></div>'">
+        {% else %}
+        <div class="card__image-placeholder">
+          <svg class="icon icon-xl"><use href="#icon-image"/></svg>
+        </div>
+        {% endif %}
+        {% if article.content_kind != "article" %}
+        <span class="card__kind-badge">
+          <svg class="icon" style="width:0.8em;height:0.8em"><use href="#icon-{{ article.content_kind }}"/></svg>
+          {{ article.content_kind }}
+        </span>
+        {% endif %}
+        {% if article._has_audio %}
+        <span class="card__media-badge card__media-badge--audio">
+          <svg class="icon" style="width:0.8em;height:0.8em"><use href="#icon-podcast"/></svg>
+          MP3
+        </span>
+        {% endif %}
+        {% if article._has_youtube %}
+        <span class="card__media-badge card__media-badge--youtube">
+          <svg class="icon" style="width:0.8em;height:0.8em"><use href="#icon-video"/></svg>
+          YouTube
+        </span>
+        {% endif %}
+        {% if article._has_video and not article._has_youtube %}
+        <span class="card__media-badge card__media-badge--video">
+          <svg class="icon" style="width:0.8em;height:0.8em"><use href="#icon-video"/></svg>
+          Video
+        </span>
+        {% endif %}
+      </div>
+
+      <div class="card__body" onclick="openArticle({{ article._idx }})">
+        <span class="card__feed">{{ article.feed_name }}</span>
+        <h3 class="card__title">
+          <a href="{{ article.canonical_url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{ article.title }}</a>
+        </h3>
+        <div class="card__meta">
+          <span class="card__meta-item">
+            <svg class="icon"><use href="#icon-calendar"/></svg>
+            {{ article.published_display }}
+          </span>
+          {% if article.author and article.author != "Unknown" %}
+          <span class="card__meta-item">
+            <svg class="icon"><use href="#icon-user"/></svg>
+            {{ article.author }}
+          </span>
+          {% endif %}
+        </div>
+        <p class="card__summary">{{ article.summary_plain }}</p>
+      </div>
+
+      {% if article.tags %}
+      <div class="card__tags">
+        {% for tag in article.tags[:6] %}
+        <span class="card__tag" onclick="searchByTag('{{ tag }}')">{{ tag }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="card__footer">
+        <a class="card__read-link" href="{{ article.canonical_url }}" target="_blank" rel="noopener">
+          Read full article
+          <svg class="icon"><use href="#icon-arrow-right"/></svg>
+        </a>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Article Modal
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" id="modal">
+    <button class="modal__close" onclick="closeArticle()" title="Close">
+      <svg class="icon"><use href="#icon-close"/></svg>
+    </button>
+    <div class="modal__hero" id="modalHero"></div>
+    <div class="modal__content">
+      <p class="modal__feed" id="modalFeed"></p>
+      <h2 class="modal__title" id="modalTitle"></h2>
+      <div class="modal__meta" id="modalMeta"></div>
+      <div class="modal__body" id="modalBody"></div>
+      <div class="modal__tags" id="modalTags"></div>
+      <div class="modal__actions" id="modalActions"></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Back-to-Top Button
+     ═══════════════════════════════════════════════════════════════════════ -->
+<button class="back-to-top" id="backToTop" title="Back to top">
+  <svg class="icon"><use href="#icon-arrow-up"/></svg>
+</button>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Footer
+     ═══════════════════════════════════════════════════════════════════════ -->
+<footer class="page-footer">
+  <p class="page-footer__text">
+    Generated {{ generation_timestamp }}
+    &middot; RSS Newspaper &middot; <svg class="icon" style="vertical-align:-2px"><use href="#icon-rss"/></svg> Automated Intelligence Digest
+  </p>
+</footer>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Inline Article Data (for modal)
+     ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+const ARTICLES = {{ articles_json | safe }};
+</script>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Application JavaScript — Search, Filters, Views, Modal
+     ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+(function() {
+  'use strict';
+
+  // ── State ──────────────────────────────────────────────────────────
+  let currentView = 'grid';
+  let currentCategory = 'all';
+  let currentKind = 'all';
+  let currentMedia = '';      // '' = no media filter
+  let currentTag = '';        // '' = no tag filter
+  let searchTerm = '';
+
+  // ── Elements ───────────────────────────────────────────────────────
+  const searchInput   = document.getElementById('searchInput');
+  const searchClear   = document.getElementById('searchClear');
+  const articleCount  = document.getElementById('articleCount');
+  const noResults     = document.getElementById('noResults');
+  const modalOverlay  = document.getElementById('modalOverlay');
+  const backToTop     = document.getElementById('backToTop');
+
+  const allCards      = document.querySelectorAll('.card');
+  const allSections   = document.querySelectorAll('.category-section');
+  const allGrids      = document.querySelectorAll('.card-grid');
+  const viewBtns      = document.querySelectorAll('.toolbar__view-btn');
+  const catBtns       = document.querySelectorAll('.toolbar__filter-btn[data-category]');
+  const kindBtns      = document.querySelectorAll('.toolbar__filter-btn[data-kind]');
+  const mediaBtns     = document.querySelectorAll('.toolbar__filter-btn[data-media]');
+  const tagBtns       = document.querySelectorAll('.tag-cloud__tag');
+
+  // ── Search ─────────────────────────────────────────────────────────
+  searchInput.addEventListener('input', function() {
+    searchTerm = this.value.trim().toLowerCase();
+    searchClear.classList.toggle('visible', searchTerm.length > 0);
+    applyFilters();
+  });
+
+  searchClear.addEventListener('click', function() {
+    searchInput.value = '';
+    searchTerm = '';
+    searchClear.classList.remove('visible');
+    applyFilters();
+    searchInput.focus();
+  });
+
+  // Keyboard shortcut: / to focus search, Esc to close modal or blur
+  document.addEventListener('keydown', function(e) {
+    if (e.key === '/' && document.activeElement !== searchInput) {
+      e.preventDefault();
+      searchInput.focus();
+    }
+    if (e.key === 'Escape') {
+      if (modalOverlay.classList.contains('open')) {
+        closeArticle();
+      } else if (document.activeElement === searchInput) {
+        searchInput.blur();
+      }
+    }
+  });
+
+  // ── Category Filters ──────────────────────────────────────────────
+  catBtns.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      catBtns.forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      currentCategory = btn.dataset.category;
+      applyFilters();
+    });
+  });
+
+  // ── Content Kind Filters ──────────────────────────────────────────
+  kindBtns.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      kindBtns.forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      currentKind = btn.dataset.kind;
+      applyFilters();
+    });
+  });
+
+  // ── Media Filters (toggle behaviour) ──────────────────────────────
+  mediaBtns.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      if (btn.classList.contains('active')) {
+        btn.classList.remove('active');
+        currentMedia = '';
+      } else {
+        mediaBtns.forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        currentMedia = btn.dataset.media;
+      }
+      applyFilters();
+    });
+  });
+
+  // ── Tag Cloud Filters (toggle behaviour) ──────────────────────────
+  tagBtns.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      if (btn.classList.contains('active')) {
+        btn.classList.remove('active');
+        currentTag = '';
+      } else {
+        tagBtns.forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        currentTag = btn.dataset.tag;
+      }
+      applyFilters();
+    });
+  });
+
+  // ── View Toggle ───────────────────────────────────────────────────
+  viewBtns.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      viewBtns.forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      currentView = btn.dataset.view;
+      applyView();
+    });
+  });
+
+  function applyView() {
+    allGrids.forEach(function(grid) {
+      grid.classList.toggle('card-grid--headlines', currentView === 'headlines');
+    });
+    allCards.forEach(function(card) {
+      card.classList.toggle('card--headline', currentView === 'headlines');
+    });
+  }
+
+  // ── Filter Logic ──────────────────────────────────────────────────
+  function applyFilters() {
+    let visibleCount = 0;
+
+    allCards.forEach(function(card) {
+      const matchesCategory = currentCategory === 'all' || card.dataset.category === currentCategory;
+      const matchesKind = currentKind === 'all' || card.dataset.kind === currentKind;
+      const matchesMedia = !currentMedia || (card.dataset.media && card.dataset.media.indexOf(currentMedia) !== -1);
+      const matchesTag = !currentTag || (card.dataset.tags && card.dataset.tags.indexOf(currentTag) !== -1);
+      const matchesSearch = !searchTerm || card.dataset.searchable.includes(searchTerm);
+      const visible = matchesCategory && matchesKind && matchesMedia && matchesTag && matchesSearch;
+
+      card.classList.toggle('hidden', !visible);
+      if (visible) visibleCount++;
+    });
+
+    // Show/hide category sections
+    allSections.forEach(function(section) {
+      const cat = section.dataset.category;
+      const matchesCatFilter = currentCategory === 'all' || cat === currentCategory;
+      const hasVisible = section.querySelectorAll('.card:not(.hidden)').length > 0;
+      section.classList.toggle('hidden', !matchesCatFilter || !hasVisible);
+
+      const countEl = section.querySelector('.section-header__count');
+      if (countEl) {
+        const cnt = section.querySelectorAll('.card:not(.hidden)').length;
+        countEl.textContent = cnt + (cnt === 1 ? ' article' : ' articles');
+      }
+    });
+
+    articleCount.textContent = visibleCount + (visibleCount === 1 ? ' article' : ' articles');
+    noResults.classList.toggle('visible', visibleCount === 0);
+    updateActiveHint();
+  }
+
+  // ── Tag Search (from card tag clicks) ─────────────────────────────
+  window.searchByTag = function(tag) {
+    // Activate the tag in the tag cloud if it exists
+    var found = false;
+    tagBtns.forEach(function(btn) {
+      if (btn.dataset.tag === tag.toLowerCase()) {
+        tagBtns.forEach(function(b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        currentTag = btn.dataset.tag;
+        found = true;
+      }
+    });
+    // If not in tag cloud, use text search
+    if (!found) {
+      searchInput.value = tag;
+      searchTerm = tag.toLowerCase();
+      searchClear.classList.add('visible');
+    }
+    // Reset category to All
+    catBtns.forEach(function(b) { b.classList.remove('active'); });
+    catBtns[0].classList.add('active');
+    currentCategory = 'all';
+    applyFilters();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // ── Reset All Filters ─────────────────────────────────────────────
+  window.resetFilters = function() {
+    searchInput.value = '';
+    searchTerm = '';
+    searchClear.classList.remove('visible');
+    currentCategory = 'all';
+    currentKind = 'all';
+    currentMedia = '';
+    currentTag = '';
+    catBtns.forEach(function(b) { b.classList.remove('active'); });
+    catBtns[0].classList.add('active');
+    kindBtns.forEach(function(b) { b.classList.remove('active'); });
+    mediaBtns.forEach(function(b) { b.classList.remove('active'); });
+    tagBtns.forEach(function(b) { b.classList.remove('active'); });
+    applyFilters();
+  };
+
+  // ── Modal ─────────────────────────────────────────────────────────
+  window.openArticle = function(idx) {
+    const article = ARTICLES[idx];
+    if (!article) return;
+
+    // Hero image
+    const heroEl = document.getElementById('modalHero');
+    if (article.image_url) {
+      heroEl.innerHTML = '<img src="' + article.image_url + '" alt="" onerror="this.parentElement.style.display=\'none\'">';
+      heroEl.style.display = '';
+    } else {
+      heroEl.style.display = 'none';
+    }
+
+    // Feed
+    document.getElementById('modalFeed').textContent = article.feed_name + ' \u2022 ' + article.category;
+
+    // Title
+    document.getElementById('modalTitle').textContent = article.title;
+
+    // Meta
+    const metaEl = document.getElementById('modalMeta');
+    let metaHtml = '';
+    metaHtml += '<span class="modal__meta-item"><svg class="icon"><use href="#icon-calendar"/></svg>' + article.published_display + '</span>';
+    if (article.author && article.author !== 'Unknown') {
+      metaHtml += '<span class="modal__meta-item"><svg class="icon"><use href="#icon-user"/></svg>' + escapeHtml(article.author) + '</span>';
+    }
+    metaHtml += '<span class="modal__meta-item"><svg class="icon"><use href="#icon-rss"/></svg>' + escapeHtml(article.feed_name) + '</span>';
+    if (article.content_kind !== 'article') {
+      metaHtml += '<span class="modal__meta-item"><svg class="icon"><use href="#icon-' + article.content_kind + '"/></svg>' + article.content_kind.charAt(0).toUpperCase() + article.content_kind.slice(1) + '</span>';
+    }
+    metaEl.innerHTML = metaHtml;
+
+    // Body
+    const bodyEl = document.getElementById('modalBody');
+    let bodyHtml = '';
+
+    // Media assets section
+    if (article.media_assets && article.media_assets.length > 0) {
+      bodyHtml += '<div style="margin-bottom:1rem;padding:0.75rem;border:1px solid var(--rule);border-radius:2px;background:var(--paper-dark)">';
+      bodyHtml += '<p style="font-family:var(--font-mono);font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink-faded);margin-bottom:0.5rem">';
+      bodyHtml += '<svg class="icon" style="vertical-align:-2px"><use href="#icon-podcast"/></svg> Media</p>';
+      article.media_assets.forEach(function(ma) {
+        var icon = ma.kind === 'youtube' ? 'video' : 'podcast';
+        var label = ma.title || (ma.kind === 'youtube' ? 'Watch on YouTube' : ma.kind === 'audio' ? 'Listen (MP3)' : 'Play media');
+        bodyHtml += '<a href="' + ma.url + '" target="_blank" rel="noopener" class="modal__action-btn" style="margin:0.25rem 0.25rem 0.25rem 0;display:inline-flex">';
+        bodyHtml += '<svg class="icon"><use href="#icon-' + icon + '"/></svg> ' + escapeHtml(label);
+        if (ma.duration_seconds) {
+          var mins = Math.floor(ma.duration_seconds / 60);
+          bodyHtml += ' <span style="opacity:0.6">(' + mins + 'min)</span>';
+        }
+        bodyHtml += '</a>';
+      });
+      bodyHtml += '</div>';
+    }
+
+    if (article.content_html) {
+      bodyHtml += article.content_html;
+    } else if (article.summary) {
+      bodyHtml += '<p>' + escapeHtml(article.summary) + '</p>';
+    } else {
+      bodyHtml += '<p style="color:var(--ink-ghost);font-style:italic">No content available for this article.</p>';
+    }
+    bodyEl.innerHTML = bodyHtml;
+
+    // Tags
+    const tagsEl = document.getElementById('modalTags');
+    if (article.tags && article.tags.length) {
+      tagsEl.innerHTML = article.tags.map(function(t) {
+        return '<span class="card__tag" onclick="closeArticle(); searchByTag(\'' + escapeHtml(t).replace(/'/g, "\\'") + '\')">' + escapeHtml(t) + '</span>';
+      }).join('');
+    } else {
+      tagsEl.innerHTML = '';
+    }
+
+    // Actions
+    const actionsEl = document.getElementById('modalActions');
+    actionsEl.innerHTML =
+      '<a class="modal__action-btn modal__action-btn--primary" href="' + article.canonical_url + '" target="_blank" rel="noopener">' +
+      '<svg class="icon"><use href="#icon-external"/></svg> Read Original</a>';
+
+    // Show
+    modalOverlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  };
+
+  window.closeArticle = function() {
+    modalOverlay.classList.remove('open');
+    document.body.style.overflow = '';
+  };
+
+  modalOverlay.addEventListener('click', function(e) {
+    if (e.target === modalOverlay) closeArticle();
+  });
+
+  // ── Filter Panel Toggle ───────────────────────────────────────────
+  const filterToggle = document.getElementById('filterToggle');
+  const filterPanel  = document.getElementById('filterPanel');
+  const activeHint   = document.getElementById('activeFilterHint');
+
+  filterToggle.addEventListener('click', function() {
+    const isOpen = filterToggle.classList.toggle('open');
+    filterPanel.classList.toggle('collapsed', !isOpen);
+  });
+
+  function updateActiveHint() {
+    const parts = [];
+    if (currentCategory !== 'all') parts.push(currentCategory);
+    if (currentKind !== 'all') parts.push(currentKind);
+    if (currentMedia) parts.push(currentMedia);
+    if (currentTag) parts.push('#' + currentTag);
+    activeHint.textContent = parts.length ? parts.join(' \u00b7 ') : '';
+  }
+
+  // ── Back to Top ───────────────────────────────────────────────────
+  window.addEventListener('scroll', function() {
+    backToTop.classList.toggle('visible', window.scrollY > 400);
+  });
+
+  backToTop.addEventListener('click', function() {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  // ── Utility ───────────────────────────────────────────────────────
+  function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+})();
+</script>
+
+</body>
+</html>

@@ -2,7 +2,10 @@
 .env
 data/
 data/feed*.opml
+data/*.opml
 data/articles/
+data/archive/
+data/newspapers/
 logs/
 .cache/
 __pycache__/
