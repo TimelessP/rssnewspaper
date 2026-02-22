@@ -1364,7 +1364,13 @@ def _infer_category_for_feed(
     feed_description: str,
     known_categories: list[str],
 ) -> str:
-    """Infer a best-fit category for a feed when category is missing."""
+    """Infer a best-fit category for a feed when category is missing.
+
+    Uses keyword matching against the feed name, URL, title, and description.
+    Only matches against categories that actually exist in the OPML.
+    Falls back to "News" (if present) or "Uncategorized" rather than
+    guessing wrong.
+    """
     haystack = " ".join(
         [
             _to_str(feed_name).lower(),
@@ -1374,18 +1380,25 @@ def _infer_category_for_feed(
         ]
     )
 
+    # Ordered by specificity — most specific categories first to avoid
+    # false positives from broad keywords.  Only categories that exist
+    # in the OPML are considered (checked via known_lookup below).
     keyword_priority: list[tuple[str, list[str]]] = [
-        ("Security", ["security", "infosec", "cyber", "owasp", "malware"]),
-        ("Podcasts", ["podcast", "episode", "audio", "libsyn", "megaphone"]),
-        ("Science", ["science", "research", "journal", "nature", "space"]),
-        ("News", ["news", "breaking", "headlines", "world"]),
-        ("Programming", ["python", "developer", "coding", "programming", "software"]),
+        ("Cryptography", ["cryptograph", "cipher", "encryption", "cr.yp.to"]),
+        ("Security", ["security", "infosec", "cyber", "owasp", "malware", "threat", "vulnerability"]),
+        ("Intelligence", ["intelligence", "espionage", "geopolitics", "osint"]),
+        ("Science", ["science", "research", "journal", "nature", "physics", "biology"]),
+        ("Space", ["space", "nasa", "astronomy", "rocket", "satellite"]),
+        ("Programming", ["python", "developer", "coding", "programming", "software", "github"]),
+        ("Electronics", ["electronics", "hardware", "circuit", "embedded", "arduino"]),
+        ("Gaming", ["gaming", "game", "esports", "playstation", "xbox"]),
+        ("Weather", ["weather", "forecast", "solar storm", "met office"]),
+        ("Energy", ["energy", "renewable", "solar power", "grid"]),
+        ("Comedy", ["comedy", "humor", "humour", "satire", "stand-up"]),
+        ("Entertainment", ["entertainment", "movie", "film", "music", "drama", "theatre"]),
+        ("Podcasts", ["podcast", "libsyn", "megaphone", "podbean", "buzzsprout", "simplecast"]),
+        ("News", ["news", "breaking", "headlines", "world news", "bbc", "guardian", "reuters"]),
         ("Tech", ["tech", "technology", "ai", "cloud", "startup", "openai"]),
-        ("Weather", ["weather", "forecast", "solar storm"]),
-        ("Entertainment", ["entertainment", "movie", "film", "music", "drama"]),
-        ("Comedy", ["comedy", "humor", "satire"]),
-        ("Intelligence", ["intel", "intelligence", "geopolitics", "espionage"]),
-        ("Gaming", ["gaming", "game", "esports"]),
     ]
 
     known_lookup = {c.lower(): c for c in known_categories}
@@ -1395,10 +1408,11 @@ def _infer_category_for_feed(
         if any(keyword in haystack for keyword in keywords):
             return known_lookup[target.lower()]
 
-    if "Tech" in known_categories:
-        return "Tech"
-    if known_categories:
-        return known_categories[0]
+    # Conservative fallback: prefer "News" over "Tech" since news is
+    # the most common generic content type; never guess niche categories.
+    for fallback_cat in ("News", "Tech"):
+        if fallback_cat in known_categories:
+            return fallback_cat
     return "Uncategorized"
 
 

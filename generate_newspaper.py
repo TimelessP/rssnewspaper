@@ -39,14 +39,31 @@ NEWSPAPERS_DIR = PROJECT_ROOT / "data" / "newspapers"
 TEMPLATE_DIR = PROJECT_ROOT / "templates"
 TEMPLATE_NAME = "newspaper.html.j2"
 
-# Category → SVG icon-id mapping
+# Category → SVG icon-id mapping (covers all known OPML categories;
+# unknown categories fall back to "newspaper")
 CATEGORY_ICONS: dict[str, str] = {
-    "Tech": "globe",
-    "Security": "shield",
-    "Science": "beaker",
-    "Space": "star",
+    "AI": "globe",
+    "Activism": "megaphone",
+    "Bylines": "article",
     "Comedy": "smile",
+    "Cryptography": "lock",
+    "Electronics": "cpu",
+    "Energy": "lightning",
+    "Entertainment": "star",
+    "Gaming": "gamepad",
+    "Government": "building",
+    "Intelligence": "eye",
+    "Legends": "book",
+    "News": "newspaper",
+    "Podcasts": "mic",
+    "Podcasts Video": "video",
+    "Programming": "code",
+    "Science": "beaker",
+    "Security": "shield",
+    "Space": "star",
+    "Tech": "globe",
     "Uncategorized": "newspaper",
+    "Weather": "sun",
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -215,22 +232,21 @@ def _sanitize_for_modal(raw_html: str) -> str:
 def group_by_category(articles: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     """Group articles by their category, maintaining sort order within each group.
 
-    Categories are sorted with a priority order, then alphabetically.
+    Categories are sorted by article count (descending), with "Uncategorized" last.
     """
     groups: dict[str, list[dict[str, Any]]] = {}
     for article in articles:
         cat = article.get("category", "Uncategorized")
         groups.setdefault(cat, []).append(article)
 
-    # Sort categories: prioritize known ones, then alphabetic
-    priority = ["Tech", "Security", "Science", "Space", "Comedy"]
+    # Sort categories by article count (most articles first),
+    # with Uncategorized always at the end
     sorted_groups: dict[str, list[dict[str, Any]]] = {}
-
-    for cat in priority:
-        if cat in groups:
-            sorted_groups[cat] = groups.pop(cat)
-
-    for cat in sorted(groups.keys()):
+    for cat in sorted(
+        groups.keys(),
+        key=lambda c: (-1 if c == "Uncategorized" else len(groups[c])),
+        reverse=True,
+    ):
         sorted_groups[cat] = groups[cat]
 
     return sorted_groups
@@ -242,12 +258,16 @@ def extract_unique_feeds(articles: list[dict[str, Any]]) -> list[str]:
 
 
 def extract_unique_categories(articles: list[dict[str, Any]]) -> list[str]:
-    """Return sorted list of unique category names."""
-    priority = ["Tech", "Security", "Science", "Space", "Comedy"]
-    cats = {a.get("category", "Uncategorized") for a in articles}
-    result = [c for c in priority if c in cats]
-    result.extend(sorted(c for c in cats if c not in priority))
-    return result
+    """Return list of unique category names sorted by article count (descending)."""
+    counts: dict[str, int] = {}
+    for a in articles:
+        cat = a.get("category", "Uncategorized")
+        counts[cat] = counts.get(cat, 0) + 1
+    return sorted(
+        counts.keys(),
+        key=lambda c: (-1 if c == "Uncategorized" else counts[c]),
+        reverse=True,
+    )
 
 
 def extract_top_tags(articles: list[dict[str, Any]], limit: int = 25) -> list[dict[str, Any]]:

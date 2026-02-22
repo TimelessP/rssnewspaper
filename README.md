@@ -194,7 +194,7 @@ python generate_newspaper.py --help
 The Jinja2 template (`templates/newspaper.html.j2`, ~1800 lines) contains:
 
 - **CSS block** — custom properties, component styles, responsive breakpoints.
-- **SVG `<defs>`** — 19 icon symbols (newspaper, search, shield, podcast, video, etc.).
+- **SVG `<defs>`** — 34 icon symbols covering all categories (newspaper, search, shield, podcast, video, lock, lightning, mic, gamepad, building, code, cpu, eye, megaphone, book, sun, etc.).
 - **HTML** — masthead, toolbar, filter panel, category sections with card grids, modal overlay, back-to-top button.
 - **Inline JSON** — `ARTICLES` array for JS article lookup (title, content, media assets, etc.).
 - **JS IIFE** — search, multi-dimensional filtering, view toggle, modal, keyboard shortcuts.
@@ -211,7 +211,7 @@ The generator computes these enrichment fields per article before passing to the
 | `_has_youtube` | Boolean — has YouTube media asset |
 | `_media_flags` | Space-separated media types for `data-media` attribute |
 
-Template context also receives: `top_tags` (top 25 tags with counts), `content_counts` (article/podcast/video/media totals), `category_icons` mapping.
+Template context also receives: `top_tags` (top 25 tags with counts), `content_counts` (article/podcast/video/media totals), `category_icons` mapping (22 categories → SVG icon-id; unknown categories fall back to `newspaper` icon). Categories are sorted dynamically by article count — no hardcoded priority lists.
 
 ## Prerequisites
 
@@ -324,10 +324,10 @@ Example: ~120 feeds × ~2 turns + overhead ≈ `300-500`.
 
 ```
 rssnewspaper/
-├── agentic_fetcher.py       # Stage 1: Agentic RSS fetcher (entry point)
-├── generate_newspaper.py    # Stage 2: HTML newspaper generator
+├── agentic_fetcher.py       # Stage 1: Agentic RSS fetcher (~2800 lines)
+├── generate_newspaper.py    # Stage 2: HTML newspaper generator (~520 lines)
 ├── templates/
-│   └── newspaper.html.j2    # Self-contained Jinja2 newspaper template
+│   └── newspaper.html.j2    # Self-contained Jinja2 template (~1900 lines, 34 SVG icons)
 ├── dev-prepare.sh           # One-shot dev environment setup
 ├── requirements.txt         # Python dependencies
 ├── example.env              # Example environment config

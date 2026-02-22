@@ -12,9 +12,9 @@ RSS Newspaper is a two-stage pipeline:
 
 | File | Purpose |
 |---|---|
-| `agentic_fetcher.py` | Agentic RSS fetcher (~2700 lines). Uses Claude Agent SDK + in-process MCP tools. |
-| `generate_newspaper.py` | Newspaper HTML generator (~500 lines). Loads JSON, enriches for display, renders Jinja2. |
-| `templates/newspaper.html.j2` | Self-contained HTML template (~1800 lines). All CSS, JS, SVG icons inline. |
+| `agentic_fetcher.py` | Agentic RSS fetcher (~2800 lines). Uses Claude Agent SDK + in-process MCP tools. |
+| `generate_newspaper.py` | Newspaper HTML generator (~520 lines). Loads JSON, enriches for display, renders Jinja2. |
+| `templates/newspaper.html.j2` | Self-contained HTML template (~1900 lines). All CSS, JS, SVG icons inline. |
 | `data/feed*.opml` | OPML subscription files (input for the fetcher). |
 | `data/articles/` | Article JSON output directory (one subdirectory per feed). |
 | `data/newspapers/` | Generated newspaper output directory (timestamped subdirectories). |
@@ -34,7 +34,7 @@ RSS Newspaper is a two-stage pipeline:
 - **CSS**: CSS custom properties throughout (`--paper`, `--ink`, `--accent`, etc.). Base font size is `32px` (rem-based scaling). Responsive grid layout.
 - **HTML structure**: Masthead → sticky toolbar (search, filter toggle, view toggle, count) → collapsible filter panel (categories, content types, media filters, tag cloud) → category sections with card grids → article modal → back-to-top.
 - **JS**: Self-contained IIFE. Multi-dimensional filtering (category × content kind × media type × tag × text search). Filter panel is collapsible with active-filter hints. Modal renders full article content including media asset links.
-- **All inline**: No external CSS/JS/font dependencies. SVG icon sprite defined in `<defs>`. Only external resources are article images.
+- **All inline**: No external CSS/JS/font dependencies. SVG icon sprite defined in `<defs>` with 34 icon symbols. Only external resources are article images.
 
 ### Generator Enrichment
 
@@ -45,7 +45,7 @@ RSS Newspaper is a two-stage pipeline:
 - `_has_audio`, `_has_video`, `_has_youtube`: boolean media flags
 - `_media_flags`: space-separated media type string for `data-media` attribute
 
-Template context also includes: `top_tags` (top 25 tags with counts), `content_counts` (article/podcast/video/media totals), `category_icons` mapping.
+Template context also includes: `top_tags` (top 25 tags with counts), `content_counts` (article/podcast/video/media totals), `category_icons` mapping (22 categories → SVG icon-id).
 
 ## Development Instructions
 
@@ -54,6 +54,30 @@ Template context also includes: `top_tags` (top 25 tags with counts), `content_c
 - The template is self-contained; test by opening the output `.html` file directly in a browser
 - Regenerate the newspaper: `python generate_newspaper.py`
 - Run the fetcher: `python agentic_fetcher.py`
+
+## Category Handling
+
+### OPML Categories
+
+The OPML file defines categories via `category` attributes on feed outlines. The fetcher preserves OPML categories as-is. When a feed has no category (empty or `"Uncategorized"`), `_infer_category_for_feed()` uses keyword matching against feed name, URL, title, and description.
+
+### Category Inference (`_infer_category_for_feed`)
+
+- **Specificity-first ordering**: Niche categories (Cryptography, Security) are matched before broad ones (News, Tech) to prevent false positives.
+- **OPML-gated**: Only categories that exist in the current OPML are considered as inference targets.
+- **Conservative fallback**: Unmatched feeds default to "News" (if present) → "Tech" → "Uncategorized", rather than guessing a niche category.
+- When adding new keyword rules, place them above broader categories in `keyword_priority`.
+
+### Generator Category Support
+
+`CATEGORY_ICONS` maps 22 category names to SVG icon IDs. Unknown categories fall back to `"newspaper"` icon. Category sections and filter buttons are sorted dynamically by article count (descending), with "Uncategorized" always last. No hardcoded priority lists — any new OPML category is handled automatically.
+
+### Adding a New Category
+
+1. Add it to your OPML file as a `category` attribute.
+2. Add a `("CategoryName", ["keyword1", "keyword2"])` tuple to `keyword_priority` in `_infer_category_for_feed()` at the appropriate specificity level.
+3. Add an SVG `<symbol id="icon-youricon">` to the template `<defs>` block.
+4. Add `"CategoryName": "youricon"` to `CATEGORY_ICONS` in `generate_newspaper.py`.
 
 ## Conventions
 
