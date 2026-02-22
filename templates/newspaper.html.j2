@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>The Daily Wire &mdash; {{ generation_date_display }}</title>
+<script>
+// Apply theme before CSS renders to prevent flash of wrong theme
+(function(){var t=localStorage.getItem('newspaper-theme')||'system';var d=(t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches));if(d)document.documentElement.setAttribute('data-theme','dark');})();
+</script>
 <style>
 /* ═══════════════════════════════════════════════════════════════════════════
    THE DAILY WIRE — Old-Time Newspaper · Art-Game Aesthetic
@@ -990,6 +994,202 @@ mark {
 ::-webkit-scrollbar-track { background: var(--paper-dark); }
 ::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-faded); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DARK THEME — Neon on Charcoal
+   ═══════════════════════════════════════════════════════════════════════ */
+[data-theme="dark"] {
+  --paper:        #1a1a1e;
+  --paper-dark:   #141417;
+  --paper-edge:   #2a2a30;
+  --ink:          #d4d4d8;
+  --ink-light:    #a1a1aa;
+  --ink-faded:    #71717a;
+  --ink-ghost:    #52525b;
+  --accent:       #f472b6;
+  --accent-hover: #f9a8d4;
+  --accent-pale:  rgba(244, 114, 182, 0.2);
+  --rule:         #3f3f46;
+  --rule-heavy:   #52525b;
+  --shadow:       rgba(0, 0, 0, 0.3);
+  --shadow-deep:  rgba(0, 0, 0, 0.5);
+  --texture-opacity: 0;
+  color-scheme: dark;
+}
+
+[data-theme="dark"] a { color: var(--accent); }
+[data-theme="dark"] a:hover { color: var(--accent-hover); }
+[data-theme="dark"] ::selection { background: var(--accent-pale); color: #fff; }
+
+/* Neon glow accents */
+[data-theme="dark"] .masthead__title {
+  color: #e4e4e7;
+  text-shadow: 0 0 30px rgba(244, 114, 182, 0.15);
+}
+[data-theme="dark"] .masthead__rule-top,
+[data-theme="dark"] .masthead__rule-bottom { border-color: #3f3f46; }
+
+[data-theme="dark"] .toolbar__search-input {
+  background: #27272a;
+  border-color: #3f3f46;
+  color: #d4d4d8;
+}
+[data-theme="dark"] .toolbar__search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(244, 114, 182, 0.2);
+}
+[data-theme="dark"] .toolbar__search-input::placeholder { color: #52525b; }
+
+[data-theme="dark"] .toolbar__filter-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a1a1e;
+}
+[data-theme="dark"] .toolbar__filter-btn[data-kind="podcast"].active,
+[data-theme="dark"] .toolbar__filter-btn[data-media="audio"].active {
+  background: #a78bfa;
+  border-color: #a78bfa;
+  color: #1a1a1e;
+}
+[data-theme="dark"] .toolbar__filter-btn[data-kind="video"].active,
+[data-theme="dark"] .toolbar__filter-btn[data-media="video"].active,
+[data-theme="dark"] .toolbar__filter-btn[data-media="youtube"].active {
+  background: #fb923c;
+  border-color: #fb923c;
+  color: #1a1a1e;
+}
+
+[data-theme="dark"] .toolbar__view-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a1a1e;
+}
+
+[data-theme="dark"] .tag-cloud__tag.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a1a1e;
+}
+
+[data-theme="dark"] .card {
+  background: #27272a;
+  border-color: #3f3f46;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+[data-theme="dark"] .card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  border-color: var(--accent);
+}
+[data-theme="dark"] .card__title a { color: #e4e4e7; }
+[data-theme="dark"] .card__title a:hover { color: var(--accent); }
+
+[data-theme="dark"] .section-header__title { color: #e4e4e7; }
+[data-theme="dark"] .section-header__icon { color: var(--accent); }
+[data-theme="dark"] .section-header__rule { border-color: #3f3f46; }
+
+[data-theme="dark"] .card__media-badge--audio {
+  background: #a78bfa;
+  color: #1a1a1e;
+}
+[data-theme="dark"] .card__media-badge--youtube {
+  background: #fb923c;
+  color: #1a1a1e;
+}
+[data-theme="dark"] .card__media-badge--video {
+  background: #38bdf8;
+  color: #1a1a1e;
+}
+
+[data-theme="dark"] .modal {
+  background: #1a1a1e;
+  border: 1px solid #3f3f46;
+}
+[data-theme="dark"] .modal__title { color: #e4e4e7; }
+[data-theme="dark"] .modal__close {
+  color: #a1a1aa;
+  background: #27272a;
+  border-color: #3f3f46;
+}
+[data-theme="dark"] .modal__close:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+[data-theme="dark"] .modal__action-btn {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+[data-theme="dark"] .modal__action-btn:hover {
+  background: var(--accent);
+  color: #1a1a1e;
+}
+[data-theme="dark"] .modal__action-btn--primary {
+  background: var(--accent);
+  color: #1a1a1e;
+}
+
+[data-theme="dark"] .back-to-top {
+  background: var(--accent);
+  color: #1a1a1e;
+  box-shadow: 0 2px 12px rgba(244, 114, 182, 0.3);
+}
+[data-theme="dark"] .back-to-top:hover {
+  background: var(--accent-hover);
+}
+
+[data-theme="dark"] .page-footer { border-color: #3f3f46; }
+
+[data-theme="dark"] ::-webkit-scrollbar-track { background: #141417; }
+[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #3f3f46; }
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+
+[data-theme="dark"] .card-grid:not(.card-grid--headlines) .card {
+  border-left-color: #3f3f46;
+}
+
+[data-theme="dark"] .filter-panel { border-bottom-color: #3f3f46; }
+
+[data-theme="dark"] .no-results__icon { color: #52525b; }
+[data-theme="dark"] mark {
+  background: rgba(244, 114, 182, 0.25);
+  color: #e4e4e7;
+}
+
+/* ── Theme Switcher ───────────────────────────────────────────────────── */
+.theme-switcher {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--rule);
+  border-radius: var(--card-radius);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.theme-switcher__btn {
+  background: transparent;
+  border: none;
+  padding: 0.3rem 0.45rem;
+  cursor: pointer;
+  color: var(--ink-ghost);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.theme-switcher__btn:not(:last-child) {
+  border-right: 1px solid var(--rule);
+}
+.theme-switcher__btn:hover {
+  color: var(--ink-light);
+  background: var(--paper-dark);
+}
+.theme-switcher__btn.active {
+  background: var(--ink);
+  color: var(--paper);
+}
+[data-theme="dark"] .theme-switcher__btn.active {
+  background: var(--accent);
+  color: #1a1a1e;
+}
 </style>
 </head>
 <body>
@@ -1219,7 +1419,7 @@ mark {
       <line x1="1" y1="14" x2="4" y2="14"/>
     </symbol>
 
-    <!-- Sun / Weather -->
+    <!-- Sun / Weather / Light mode -->
     <symbol id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="12" r="5"/>
       <line x1="12" y1="1" x2="12" y2="3"/>
@@ -1230,6 +1430,18 @@ mark {
       <line x1="21" y1="12" x2="23" y2="12"/>
       <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
       <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+    </symbol>
+
+    <!-- Moon / Dark mode -->
+    <symbol id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+    </symbol>
+
+    <!-- Monitor / System mode -->
+    <symbol id="icon-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+      <line x1="8" y1="21" x2="16" y2="21"/>
+      <line x1="12" y1="17" x2="12" y2="21"/>
     </symbol>
 
     <!-- Decorative corner flourish -->
@@ -1306,6 +1518,18 @@ mark {
       </button>
       <button class="toolbar__view-btn" data-view="headlines" title="Headlines view">
         <svg class="icon"><use href="#icon-list"/></svg>
+      </button>
+    </div>
+
+    <div class="theme-switcher" id="themeSwitcher">
+      <button class="theme-switcher__btn" data-theme-value="system" title="System theme">
+        <svg class="icon" style="width:0.8em;height:0.8em"><use href="#icon-monitor"/></svg>
+      </button>
+      <button class="theme-switcher__btn" data-theme-value="light" title="Light theme">
+        <svg class="icon" style="width:0.8em;height:0.8em"><use href="#icon-sun"/></svg>
+      </button>
+      <button class="theme-switcher__btn" data-theme-value="dark" title="Dark theme">
+        <svg class="icon" style="width:0.8em;height:0.8em"><use href="#icon-moon"/></svg>
       </button>
     </div>
 
@@ -1542,6 +1766,53 @@ mark {
      ═══════════════════════════════════════════════════════════════════════ -->
 <script>
 const ARTICLES = {{ articles_json | safe }};
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Theme Switcher — System / Light / Dark
+     Applied early to prevent flash of wrong theme
+     ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+(function() {
+  'use strict';
+  var THEME_KEY = 'newspaper-theme';
+  var saved = localStorage.getItem(THEME_KEY) || 'system';
+
+  function resolveTheme(pref) {
+    if (pref === 'dark') return 'dark';
+    if (pref === 'light') return 'light';
+    // system — follow OS
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+
+  function applyTheme(pref) {
+    var resolved = resolveTheme(pref);
+    document.documentElement.setAttribute('data-theme', resolved === 'dark' ? 'dark' : '');
+    // Update switcher button states
+    var btns = document.querySelectorAll('.theme-switcher__btn');
+    btns.forEach(function(b) {
+      b.classList.toggle('active', b.dataset.themeValue === pref);
+    });
+  }
+
+  // Initial apply
+  applyTheme(saved);
+
+  // Listen for clicks
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.theme-switcher__btn');
+    if (!btn) return;
+    var pref = btn.dataset.themeValue;
+    localStorage.setItem(THEME_KEY, pref);
+    applyTheme(pref);
+  });
+
+  // Re-evaluate if OS preference changes while on "system"
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+    var current = localStorage.getItem(THEME_KEY) || 'system';
+    if (current === 'system') applyTheme('system');
+  });
+})();
 </script>
 
 
