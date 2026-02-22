@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import socket
 import signal
 import subprocess
@@ -228,6 +229,19 @@ def _collect_gpu_diagnostics() -> str:
     return "\n".join(details)
 
 
+def _extract_estimated_max_model_len(log_text: str) -> int | None:
+    """Extract vLLM's estimated max model length from KV-cache error logs."""
+
+    match = re.search(r"estimated maximum model length is\s+(\d+)", log_text)
+    if not match:
+        return None
+    try:
+        value = int(match.group(1))
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 def _is_tcp_port_in_use(host: str, port: int) -> bool:
     """Return True when a TCP port is already bound/listening."""
 
@@ -338,8 +352,8 @@ def _wait_for_vllm_ready(
                 )
             kv_cache_hint = ""
             if "estimated maximum model length is" in log_tail:
-                match = re.search(r"estimated maximum model length is\s+(\d+)", log_tail)
-                suggested_len = match.group(1) if match else "(unknown)"
+                estimated_max_len = _extract_estimated_max_model_len(log_tail)
+                suggested_len = str(estimated_max_len) if estimated_max_len else "(unknown)"
                 kv_cache_hint = (
                     "\n\nDetected KV-cache capacity limit for current settings. "
                     "Lower VLLM_MAX_MODEL_LEN (for example to "
@@ -435,12 +449,75 @@ def configure_llm_runtime() -> tuple[subprocess.Popen[str] | None, str]:
         scan_limit=master_port_scan_limit,
         reserved_port=port,
     )
-    max_model_len = int(os.environ.get("VLLM_MAX_MODEL_LEN", "2000"))
+    max_model_len = int(os.environ.get("VLLM_MAX_MODEL_LEN", "20000"))
     if max_model_len <= 0:
         raise RuntimeError("VLLM_MAX_MODEL_LEN must be a positive integer.")
+    auto_adjust_max_model_len = _env_flag("VLLM_AUTO_ADJUST_MAX_MODEL_LEN")
     gpu_memory_utilization = float(
         os.environ.get("VLLM_GPU_MEMORY_UTILIZATION", "0.9")
     )
+    fit_profile = _env_flag("VLLM_FIT_PROFILE")
+    max_num_seqs_raw = os.environ.get("VLLM_MAX_NUM_SEQS", "").strip()
+    max_num_batched_tokens_raw = os.environ.get(
+        "VLLM_MAX_NUM_BATCHED_TOKENS", ""
+    ).strip()
+    enforce_eager = _env_flag("VLLM_ENFORCE_EAGER")
+    kv_cache_dtype = os.environ.get("VLLM_KV_CACHE_DTYPE", "").strip()
+    cpu_offload_gb_raw = os.environ.get("VLLM_CPU_OFFLOAD_GB", "").strip()
+    swap_space_gb_raw = os.environ.get("VLLM_SWAP_SPACE_GB", "").strip()
+    load_format = os.environ.get("VLLM_LOAD_FORMAT", "").strip()
+    quantization = os.environ.get("VLLM_QUANTIZATION", "").strip()
+    dtype = os.environ.get("VLLM_DTYPE", "").strip()
+    extra_args_raw = os.environ.get("VLLM_EXTRA_ARGS", "").strip()
+
+    if fit_profile:
+        if not max_num_seqs_raw:
+            max_num_seqs_raw = "1"
+        if not max_num_batched_tokens_raw:
+            max_num_batched_tokens_raw = "512"
+        if not _env_flag("VLLM_ENFORCE_EAGER"):
+            enforce_eager = True
+
+    if max_num_seqs_raw:
+        max_num_seqs = int(max_num_seqs_raw)
+        if max_num_seqs <= 0:
+            raise RuntimeError("VLLM_MAX_NUM_SEQS must be a positive integer.")
+    else:
+        max_num_seqs = None
+
+    if max_num_batched_tokens_raw:
+        max_num_batched_tokens = int(max_num_batched_tokens_raw)
+        if max_num_batched_tokens <= 0:
+            raise RuntimeError(
+                "VLLM_MAX_NUM_BATCHED_TOKENS must be a positive integer."
+            )
+    else:
+        max_num_batched_tokens = None
+
+    if cpu_offload_gb_raw:
+        cpu_offload_gb = float(cpu_offload_gb_raw)
+        if cpu_offload_gb < 0:
+            raise RuntimeError("VLLM_CPU_OFFLOAD_GB must be >= 0.")
+    else:
+        cpu_offload_gb = None
+
+    if swap_space_gb_raw:
+        swap_space_gb = float(swap_space_gb_raw)
+        if swap_space_gb < 0:
+            raise RuntimeError("VLLM_SWAP_SPACE_GB must be >= 0.")
+    else:
+        swap_space_gb = None
+
+    extra_args: list[str] = []
+    if extra_args_raw:
+        try:
+            extra_args = shlex.split(extra_args_raw)
+        except ValueError as exc:
+            raise RuntimeError(
+                "VLLM_EXTRA_ARGS could not be parsed. Ensure it is a valid shell-style "
+                "argument string."
+            ) from exc
+
     api_key = os.environ.get("VLLM_API_KEY", "dummy")
     tool_call_parser = os.environ.get("VLLM_TOOL_CALL_PARSER", "mistral")
     wait_timeout_seconds = int(os.environ.get("VLLM_STARTUP_TIMEOUT", "1800"))
@@ -457,59 +534,105 @@ def configure_llm_runtime() -> tuple[subprocess.Popen[str] | None, str]:
     _validate_hf_model_access(vllm_model, hf_token)
 
     endpoint = f"http://{host}:{port}"
-    serve_cmd = [
-        "vllm",
-        "serve",
-        vllm_model,
-        "--host",
-        host,
-        "--port",
-        str(port),
-        "--master-port",
-        str(master_port),
-        "--served-model-name",
-        served_model_name,
-        "--max-model-len",
-        str(max_model_len),
-        "--gpu-memory-utilization",
-        str(gpu_memory_utilization),
-        "--api-key",
-        api_key,
-        "--enable-auto-tool-choice",
-        "--tool-call-parser",
-        tool_call_parser,
-    ]
-    if hf_token:
-        serve_cmd.extend(["--hf-token", hf_token])
+    effective_max_model_len = max_model_len
+    process: subprocess.Popen[str] | None = None
+    log_path: Path | None = None
+    launch_error: Exception | None = None
 
-    log_dir = PROJECT_ROOT / ".cache"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"vllm-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.log"
-    log_handle = log_path.open("w", encoding="utf-8")
+    for attempt in range(2):
+        serve_cmd = [
+            "vllm",
+            "serve",
+            vllm_model,
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--master-port",
+            str(master_port),
+            "--served-model-name",
+            served_model_name,
+            "--max-model-len",
+            str(effective_max_model_len),
+            "--gpu-memory-utilization",
+            str(gpu_memory_utilization),
+            "--api-key",
+            api_key,
+            "--enable-auto-tool-choice",
+            "--tool-call-parser",
+            tool_call_parser,
+        ]
+        if max_num_seqs is not None:
+            serve_cmd.extend(["--max-num-seqs", str(max_num_seqs)])
+        if max_num_batched_tokens is not None:
+            serve_cmd.extend(
+                ["--max-num-batched-tokens", str(max_num_batched_tokens)]
+            )
+        if enforce_eager:
+            serve_cmd.append("--enforce-eager")
+        if kv_cache_dtype:
+            serve_cmd.extend(["--kv-cache-dtype", kv_cache_dtype])
+        if cpu_offload_gb is not None:
+            serve_cmd.extend(["--cpu-offload-gb", str(cpu_offload_gb)])
+        if swap_space_gb is not None:
+            serve_cmd.extend(["--swap-space", str(swap_space_gb)])
+        if load_format:
+            serve_cmd.extend(["--load-format", load_format])
+        if quantization:
+            serve_cmd.extend(["--quantization", quantization])
+        if dtype:
+            serve_cmd.extend(["--dtype", dtype])
+        if extra_args:
+            serve_cmd.extend(extra_args)
+        if hf_token:
+            serve_cmd.extend(["--hf-token", hf_token])
 
-    try:
-        process = subprocess.Popen(
-            serve_cmd,
-            cwd=str(PROJECT_ROOT),
-            text=True,
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    except FileNotFoundError as exc:
-        log_handle.close()
-        raise RuntimeError(
-            "USE_VLLM=1 but 'vllm' executable was not found. "
-            "Install vLLM in the active environment."
-        ) from exc
-    finally:
-        log_handle.close()
+        log_dir = PROJECT_ROOT / ".cache"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"vllm-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.log"
+        log_handle = log_path.open("w", encoding="utf-8")
 
-    try:
-        _wait_for_vllm_ready(endpoint, wait_timeout_seconds, process, log_path)
-    except Exception:
-        _stop_process_gracefully(process)
-        raise
+        try:
+            process = subprocess.Popen(
+                serve_cmd,
+                cwd=str(PROJECT_ROOT),
+                text=True,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        except FileNotFoundError as exc:
+            log_handle.close()
+            raise RuntimeError(
+                "USE_VLLM=1 but 'vllm' executable was not found. "
+                "Install vLLM in the active environment."
+            ) from exc
+        finally:
+            log_handle.close()
+
+        try:
+            _wait_for_vllm_ready(endpoint, wait_timeout_seconds, process, log_path)
+            launch_error = None
+            break
+        except Exception as exc:
+            launch_error = exc
+            _stop_process_gracefully(process)
+            process = None
+            if not auto_adjust_max_model_len or attempt > 0:
+                break
+            log_tail = _tail_text_file(log_path, max_lines=300)
+            estimated_max_len = _extract_estimated_max_model_len(log_tail)
+            if estimated_max_len is None:
+                break
+            if estimated_max_len >= effective_max_model_len:
+                break
+            effective_max_model_len = estimated_max_len
+            os.environ["VLLM_AUTO_ADJUSTED_MAX_MODEL_LEN"] = str(effective_max_model_len)
+
+    if launch_error is not None:
+        raise launch_error
+    assert process is not None
+    assert log_path is not None
 
     prior_model_env = os.environ.get("MODEL", "")
 
@@ -527,7 +650,39 @@ def configure_llm_runtime() -> tuple[subprocess.Popen[str] | None, str]:
     os.environ["VLLM_EFFECTIVE_PORT"] = str(port)
     os.environ["VLLM_REQUESTED_MASTER_PORT"] = str(requested_master_port)
     os.environ["VLLM_EFFECTIVE_MASTER_PORT"] = str(master_port)
+    os.environ["VLLM_REQUESTED_MAX_MODEL_LEN"] = str(max_model_len)
+    os.environ["VLLM_EFFECTIVE_MAX_MODEL_LEN"] = str(effective_max_model_len)
     return process, endpoint
+
+
+def _validate_agent_context_capacity() -> str | None:
+    """Return a non-blocking advisory when vLLM context appears too small."""
+
+    if not _env_flag("USE_VLLM"):
+        return None
+
+    try:
+        effective_max = int(os.environ.get("VLLM_EFFECTIVE_MAX_MODEL_LEN", "0"))
+        required_min = int(os.environ.get("AGENT_MIN_CONTEXT_TOKENS", "16000"))
+    except ValueError:
+        return None
+
+    if required_min <= 0:
+        return None
+
+    if effective_max < required_min:
+        return (
+            "vLLM context advisory: effective capacity appears below workflow target.\n\n"
+            f"Effective vLLM max context: {effective_max} tokens\n"
+            f"Advisory minimum (AGENT_MIN_CONTEXT_TOKENS): {required_min} tokens\n\n"
+            "vLLM ultimately decides the runnable context at startup. This check is guidance only.\n"
+            "If requests fail with context/token-limit errors, consider:\n"
+            "- Use USE_VLLM=0 to route through ANTHROPIC_BASE_URL instead.\n"
+            "- Tune VLLM_MAX_MODEL_LEN / VLLM_GPU_MEMORY_UTILIZATION / fit-profile vars.\n"
+            "- Reduce prompt/tool payload, then lower AGENT_MIN_CONTEXT_TOKENS accordingly."
+        )
+
+    return None
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2140,6 +2295,34 @@ RULES
 """
 
 
+def _build_agent_prompts(user_prompt: str, force_user_only: bool = False) -> tuple[str | None, str]:
+    """Return system/user prompts with optional model-template compatibility mode."""
+
+    if not force_user_only:
+        return SYSTEM_PROMPT, user_prompt
+
+    merged_prompt = (
+        "SYSTEM INSTRUCTIONS:\n"
+        f"{SYSTEM_PROMPT.strip()}\n\n"
+        "USER REQUEST:\n"
+        f"{user_prompt.strip()}"
+    )
+    return None, merged_prompt
+
+
+def _is_role_template_error(exc: Exception) -> bool:
+    """Detect backend prompt-template role errors that can be fixed by user-only fallback."""
+
+    text = str(exc)
+    return (
+        "Error rendering prompt with jinja template" in text
+        and (
+            "Only user and assistant roles are supported" in text
+            or "conversation roles must alternate user/assistant" in text
+        )
+    )
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  Main Entry Point
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2149,133 +2332,179 @@ async def main() -> None:
     """Run the agentic RSS feed fetcher workflow."""
 
     vllm_process, llm_endpoint = configure_llm_runtime()
-
-    print("=" * 70)
-    print("  RSS Newspaper — Agentic Fetcher")
-    print("=" * 70)
-    print(f"  Project root: {PROJECT_ROOT}")
-    print(f"  Data dir:     {DATA_DIR}")
-    print(f"  Articles dir: {ARTICLES_DIR}")
-    print(f"  Cutoff:       last {CUTOFF_DAYS} days")
-    print(f"  LLM endpoint: {llm_endpoint}")
-    print(f"  Model:        {os.environ.get('MODEL', '(default)')}")
-    if vllm_process is not None:
-        print(f"  Runtime:      vLLM (pid={vllm_process.pid})")
-        print(f"  vLLM model:   {os.environ.get('VLLM_MODEL', '(unknown)')}")
-        original_model = os.environ.get("VLLM_ORIGINAL_MODEL_ENV")
-        if original_model:
-            print(f"  prior MODEL:  {original_model}")
-        requested_port = os.environ.get("VLLM_REQUESTED_PORT")
-        effective_port = os.environ.get("VLLM_EFFECTIVE_PORT")
-        if requested_port and effective_port and requested_port != effective_port:
-            print(f"  vLLM port:    requested {requested_port} → using {effective_port}")
-        requested_master_port = os.environ.get("VLLM_REQUESTED_MASTER_PORT")
-        effective_master_port = os.environ.get("VLLM_EFFECTIVE_MASTER_PORT")
-        if requested_master_port and effective_master_port:
-            if requested_master_port != effective_master_port:
-                print(
-                    "  vLLM master:  "
-                    f"requested {requested_master_port} → using {effective_master_port}"
-                )
-            else:
-                print(f"  vLLM master:  {effective_master_port}")
-        print(f"  vLLM logs:    {os.environ.get('VLLM_LOG_PATH', '(unknown)')}")
-    print("=" * 70)
-    print()
-
-    # Ensure output directory exists
-    ARTICLES_DIR.mkdir(parents=True, exist_ok=True)
-
-    # ── Build options ───────────────────────────────────────────────────────
-    options = ClaudeAgentOptions(
-        system_prompt=SYSTEM_PROMPT,
-        mcp_servers={"rss_tools": rss_server},
-        model=os.environ.get("MODEL"),
-        allowed_tools=[
-            # Custom MCP tools
-            "mcp__rss_tools__parse_opml_files",
-            "mcp__rss_tools__process_single_feed",
-            "mcp__rss_tools__extract_page_metadata",
-            "mcp__rss_tools__save_article",
-            "mcp__rss_tools__list_feed_articles",
-            "mcp__rss_tools__get_run_statistics",
-            # Built-in tools for ad-hoc enrichment / searching
-            "WebSearch",
-            "WebFetch",
-        ],
-        permission_mode="bypassPermissions",
-        cwd=str(PROJECT_ROOT),
-        max_turns=500,  # ~120 feeds × ~2 turns each + overhead
-    )
-
-    # ── Prompt ──────────────────────────────────────────────────────────────
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    prompt = (
-        f"Today is {today}.  Begin the RSS article fetching workflow now.  "
-        f"Process ALL feeds found in the OPML files under data/.  "
-        f"Fetch articles from the last {CUTOFF_DAYS} days, deduplicate, "
-        f"enrich where possible, and save them all as JSON files."
-    )
-
-    # ── Run agent ───────────────────────────────────────────────────────────
-    feeds_processed = 0
-
+    context_capacity_advisory = _validate_agent_context_capacity()
     try:
-        async with ClaudeSDKClient(options=options) as client:
-            await client.query(prompt)
+        print("=" * 70)
+        print("  RSS Newspaper — Agentic Fetcher")
+        print("=" * 70)
+        print(f"  Project root: {PROJECT_ROOT}")
+        print(f"  Data dir:     {DATA_DIR}")
+        print(f"  Articles dir: {ARTICLES_DIR}")
+        print(f"  Cutoff:       last {CUTOFF_DAYS} days")
+        print(f"  LLM endpoint: {llm_endpoint}")
+        print(f"  Model:        {os.environ.get('MODEL', '(default)')}")
+        if vllm_process is not None:
+            print(f"  Runtime:      vLLM (pid={vllm_process.pid})")
+            print(f"  vLLM model:   {os.environ.get('VLLM_MODEL', '(unknown)')}")
+            original_model = os.environ.get("VLLM_ORIGINAL_MODEL_ENV")
+            if original_model:
+                print(f"  prior MODEL:  {original_model}")
+            requested_port = os.environ.get("VLLM_REQUESTED_PORT")
+            effective_port = os.environ.get("VLLM_EFFECTIVE_PORT")
+            if requested_port and effective_port and requested_port != effective_port:
+                print(f"  vLLM port:    requested {requested_port} → using {effective_port}")
+            requested_master_port = os.environ.get("VLLM_REQUESTED_MASTER_PORT")
+            effective_master_port = os.environ.get("VLLM_EFFECTIVE_MASTER_PORT")
+            if requested_master_port and effective_master_port:
+                if requested_master_port != effective_master_port:
+                    print(
+                        "  vLLM master:  "
+                        f"requested {requested_master_port} → using {effective_master_port}"
+                    )
+                else:
+                    print(f"  vLLM master:  {effective_master_port}")
+            requested_max_len = os.environ.get("VLLM_REQUESTED_MAX_MODEL_LEN")
+            effective_max_len = os.environ.get("VLLM_EFFECTIVE_MAX_MODEL_LEN")
+            if requested_max_len and effective_max_len:
+                if requested_max_len != effective_max_len:
+                    print(
+                        "  vLLM maxlen:  "
+                        f"requested {requested_max_len} → using {effective_max_len}"
+                    )
+                else:
+                    print(f"  vLLM maxlen:  {effective_max_len}")
+            print(f"  vLLM logs:    {os.environ.get('VLLM_LOG_PATH', '(unknown)')}")
+            if context_capacity_advisory:
+                print()
+                print("  [Advisory]")
+                for line in context_capacity_advisory.splitlines():
+                    print(f"  {line}")
+        print("=" * 70)
+        print()
 
-            async for message in client.receive_messages():
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            print(f"\n[Agent] {block.text}")
-                        elif isinstance(block, ToolUseBlock):
-                            tool_name_short = block.name.split("__")[-1]
-                            input_preview = json.dumps(block.input)
-                            if len(input_preview) > 120:
-                                input_preview = input_preview[:117] + "..."
-                            print(f"  → {tool_name_short}({input_preview})")
-                            if tool_name_short == "process_single_feed":
-                                feeds_processed += 1
-                                print(
-                                    f"    [feed #{feeds_processed}: "
-                                    f"{block.input.get('feed_name', '?')}]"
-                                )
-                        elif isinstance(block, ToolResultBlock):
-                            # Summarise tool results concisely
-                            if block.content and isinstance(block.content, str):
-                                try:
-                                    data = json.loads(block.content)
-                                    if "new_saved" in data:
+        # Ensure output directory exists
+        ARTICLES_DIR.mkdir(parents=True, exist_ok=True)
+
+        # ── Prompt ──────────────────────────────────────────────────────────────
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        base_prompt = (
+            f"Today is {today}.  Begin the RSS article fetching workflow now.  "
+            f"Process ALL feeds found in the OPML files under data/.  "
+            f"Fetch articles from the last {CUTOFF_DAYS} days, deduplicate, "
+            f"enrich where possible, and save them all as JSON files."
+        )
+        feeds_processed = 0
+        force_user_only = _env_flag("LMSTUDIO_USER_ONLY_PROMPT")
+        allow_auto_retry = _env_flag("LMSTUDIO_AUTO_USER_ONLY_RETRY")
+
+        for attempt in range(2):
+            system_prompt, prompt = _build_agent_prompts(
+                base_prompt,
+                force_user_only=force_user_only,
+            )
+            if force_user_only:
+                print("  Prompt mode: model-template compatibility (user-only merge)")
+                print()
+
+            # ── Build options ───────────────────────────────────────────────────
+            options_kwargs: dict[str, Any] = {
+                "mcp_servers": {"rss_tools": rss_server},
+                "model": os.environ.get("MODEL"),
+                "allowed_tools": [
+                    # Custom MCP tools
+                    "mcp__rss_tools__parse_opml_files",
+                    "mcp__rss_tools__process_single_feed",
+                    "mcp__rss_tools__extract_page_metadata",
+                    "mcp__rss_tools__save_article",
+                    "mcp__rss_tools__list_feed_articles",
+                    "mcp__rss_tools__get_run_statistics",
+                    # Built-in tools for ad-hoc enrichment / searching
+                    "WebSearch",
+                    "WebFetch",
+                ],
+                "permission_mode": "bypassPermissions",
+                "cwd": str(PROJECT_ROOT),
+                "max_turns": 500,  # ~120 feeds × ~2 turns each + overhead
+            }
+            if system_prompt is not None:
+                options_kwargs["system_prompt"] = system_prompt
+
+            options = ClaudeAgentOptions(**options_kwargs)
+            feeds_processed = 0
+
+            try:
+                async with ClaudeSDKClient(options=options) as client:
+                    await client.query(prompt)
+
+                    async for message in client.receive_messages():
+                        if isinstance(message, AssistantMessage):
+                            for block in message.content:
+                                if isinstance(block, TextBlock):
+                                    print(f"\n[Agent] {block.text}")
+                                elif isinstance(block, ToolUseBlock):
+                                    tool_name_short = block.name.split("__")[-1]
+                                    input_preview = json.dumps(block.input)
+                                    if len(input_preview) > 120:
+                                        input_preview = input_preview[:117] + "..."
+                                    print(f"  → {tool_name_short}({input_preview})")
+                                    if tool_name_short == "process_single_feed":
+                                        feeds_processed += 1
                                         print(
-                                            f"    ✓ saved={data['new_saved']}  "
-                                            f"dupes={data.get('duplicates_skipped', 0)}  "
-                                            f"status={data.get('status', '?')}"
+                                            f"    [feed #{feeds_processed}: "
+                                            f"{block.input.get('feed_name', '?')}]"
                                         )
-                                except (json.JSONDecodeError, TypeError):
-                                    pass
+                                elif isinstance(block, ToolResultBlock):
+                                    # Summarise tool results concisely
+                                    if block.content and isinstance(block.content, str):
+                                        try:
+                                            data = json.loads(block.content)
+                                            if "new_saved" in data:
+                                                print(
+                                                    f"    ✓ saved={data['new_saved']}  "
+                                                    f"dupes={data.get('duplicates_skipped', 0)}  "
+                                                    f"status={data.get('status', '?')}"
+                                                )
+                                        except (json.JSONDecodeError, TypeError):
+                                            pass
 
-                elif isinstance(message, ResultMessage):
+                        elif isinstance(message, ResultMessage):
+                            print()
+                            print("=" * 70)
+                            print(f"  Workflow finished: {message.subtype}")
+                            print(f"  Duration:  {message.duration_ms / 1000:.1f}s")
+                            print(f"  Turns:     {message.num_turns}")
+                            if message.total_cost_usd is not None:
+                                print(f"  Cost:      ${message.total_cost_usd:.4f}")
+                            if message.result:
+                                # Print the final summary (truncate if very long)
+                                result_text = message.result
+                                if len(result_text) > 2000:
+                                    result_text = result_text[:2000] + "\n... (truncated)"
+                                print(f"\n{result_text}")
+                break
+            except Exception as exc:
+                should_retry = (
+                    attempt == 0
+                    and not force_user_only
+                    and allow_auto_retry
+                    and _is_role_template_error(exc)
+                )
+                if should_retry:
                     print()
-                    print("=" * 70)
-                    print(f"  Workflow finished: {message.subtype}")
-                    print(f"  Duration:  {message.duration_ms / 1000:.1f}s")
-                    print(f"  Turns:     {message.num_turns}")
-                    if message.total_cost_usd is not None:
-                        print(f"  Cost:      ${message.total_cost_usd:.4f}")
-                    if message.result:
-                        # Print the final summary (truncate if very long)
-                        result_text = message.result
-                        if len(result_text) > 2000:
-                            result_text = result_text[:2000] + "\n... (truncated)"
-                        print(f"\n{result_text}")
+                    print(
+                        "  [Advisory] Prompt-template role mismatch detected from model metadata; "
+                        "retrying with merged user-only prompt mode."
+                    )
+                    print()
+                    force_user_only = True
+                    continue
+                raise
+        print(f"\nTotal feeds dispatched: {feeds_processed}")
+        print(f"Article files at: {ARTICLES_DIR}")
+        print("Done.")
     finally:
         if vllm_process is not None and vllm_process.poll() is None:
             _stop_process_gracefully(vllm_process)
-
-    print(f"\nTotal feeds dispatched: {feeds_processed}")
-    print(f"Article files at: {ARTICLES_DIR}")
-    print("Done.")
 
 
 if __name__ == "__main__":

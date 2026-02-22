@@ -197,6 +197,8 @@ Environment variables are loaded from `.env` (see `example.env`):
 | `MODEL` | Model name used by the SDK client (`USE_VLLM=1` overrides this to `VLLM_SERVED_MODEL_NAME`) | `mistral-7b-instruct-v0_3` |
 | `CLAUDE_CODE_MAX_OUTPUT_TOKENS` | Max output tokens per assistant response | `20000` |
 | `ANTHROPIC_USE_MESSAGES_ENDPOINT` | Enables LM Studio Anthropic `/v1/messages` compatibility mode | `true` |
+| `LMSTUDIO_USER_ONLY_PROMPT` | When `1`, always avoid Anthropic `system` role by embedding system instructions in the first user message (template-compat mode) | `0` |
+| `LMSTUDIO_AUTO_USER_ONLY_RETRY` | When `1`, auto-retries once in template-compat mode if backend returns a Jinja role-mismatch error | `1` |
 | `USE_VLLM` | When `1`, auto-start local vLLM server from the script | `1` |
 | `VLLM_MODEL` | Hugging Face model id passed to `vllm serve` | `mistralai/Mistral-7B-Instruct-v0.3` |
 | `VLLM_SERVED_MODEL_NAME` | Alias exposed by vLLM (used by client model mapping, must not contain `/`) | `mistral-7b-instruct-v0_3` |
@@ -207,10 +209,23 @@ Environment variables are loaded from `.env` (see `example.env`):
 | `VLLM_MASTER_PORT_SCAN_LIMIT` | How many higher ports to probe if `VLLM_MASTER_PORT` is in use | `100` |
 | `VLLM_API_KEY` | API key expected by local vLLM server | `dummy` |
 | `VLLM_HF_TOKEN` | Optional Hugging Face token for private/gated models (`--hf-token`) | `` |
-| `VLLM_MAX_MODEL_LEN` | vLLM max context length (lower this if KV cache errors occur) | `2000` |
+| `VLLM_MAX_MODEL_LEN` | Requested vLLM max context length | `20000` |
+| `VLLM_AUTO_ADJUST_MAX_MODEL_LEN` | If `1`, auto-retry startup using vLLM's estimated safe max length after KV-cache failure | `1` |
 | `VLLM_GPU_MEMORY_UTILIZATION` | Fraction of total VRAM vLLM may reserve (`0.1`–`1.0`) | `0.9` |
+| `VLLM_FIT_PROFILE` | If `1`, applies fit-first defaults when unset (`max-num-seqs=1`, `max-num-batched-tokens=512`, `enforce-eager=1`) | `1` |
+| `VLLM_MAX_NUM_SEQS` | vLLM scheduler limit (`--max-num-seqs`) | `` |
+| `VLLM_MAX_NUM_BATCHED_TOKENS` | vLLM scheduler token cap (`--max-num-batched-tokens`) | `` |
+| `VLLM_ENFORCE_EAGER` | Disable CUDA graph capture (`--enforce-eager`) to reduce memory overhead | `1` |
+| `VLLM_KV_CACHE_DTYPE` | KV cache dtype override (e.g. `fp8`, `bfloat16`) | `` |
+| `VLLM_CPU_OFFLOAD_GB` | vLLM CPU offload budget in GiB (`--cpu-offload-gb`) | `` |
+| `VLLM_SWAP_SPACE_GB` | vLLM CPU swap space per GPU in GiB (`--swap-space`) | `` |
+| `VLLM_LOAD_FORMAT` | vLLM load format override (`auto`, `gguf`, `bitsandbytes`, etc.) | `` |
+| `VLLM_QUANTIZATION` | Explicit quantization method (`--quantization`) | `` |
+| `VLLM_DTYPE` | Weight/activation dtype override (`--dtype`) | `` |
+| `VLLM_EXTRA_ARGS` | Raw extra args appended to `vllm serve` (advanced escape hatch) | `` |
 | `VLLM_TOOL_CALL_PARSER` | vLLM tool-call parser for the selected model | `mistral` |
 | `VLLM_STARTUP_TIMEOUT` | Seconds to wait for vLLM health readiness (`0` = no timeout) | `1800` |
+| `AGENT_MIN_CONTEXT_TOKENS` | Advisory threshold for effective context capacity (`0` disables advisory; does not block startup) | `16000` |
 
 ### Runtime Modes
 
