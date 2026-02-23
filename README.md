@@ -187,7 +187,7 @@ python generate_newspaper.py --help
 - **Grid / headline views** — toggle between card grid and compact headline list.
 - **Article modal** — full content display with media asset links (MP3 play, YouTube watch), tags, and link to original.
 - **Fully self-contained** — all CSS, JS, and SVG icons are inline. No external dependencies. Only article images are external resources.
-- **Responsive** — scales from mobile to desktop with a 32px rem base for readability.
+- **Responsive** — scales from mobile to desktop with a 16px rem base for readability.
 
 ### Template Architecture
 

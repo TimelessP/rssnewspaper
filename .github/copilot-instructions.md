@@ -31,7 +31,7 @@ RSS Newspaper is a two-stage pipeline:
 
 ### Newspaper Template
 
-- **CSS**: CSS custom properties throughout (`--paper`, `--ink`, `--accent`, etc.). Base font size is `32px` (rem-based scaling). Responsive grid layout.
+- **CSS**: CSS custom properties throughout (`--paper`, `--ink`, `--accent`, etc.). Base font size is `16px` (rem-based scaling). Responsive grid layout.
 - **HTML structure**: Masthead → sticky toolbar (search, filter toggle, view toggle, count) → collapsible filter panel (categories, content types, media filters, tag cloud) → category sections with card grids → article modal → back-to-top.
 - **JS**: Self-contained IIFE. Multi-dimensional filtering (category × content kind × media type × tag × text search). Filter panel is collapsible with active-filter hints. Modal renders full article content including media asset links.
 - **All inline**: No external CSS/JS/font dependencies. SVG icon sprite defined in `<defs>` with 34 icon symbols. Only external resources are article images.
